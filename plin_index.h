@@ -195,6 +195,7 @@ class PlinIndex {
                 return;
             }
             
+            
             outfile<< "Split Times: " << split_times << std::endl;
             outfile<<"local_table.size() "<<local_table.size()<<"plin_leaf_nums "<<plin_leaf_nums<<"real_leaf_num"<<real_leaf_num<<std::endl;
             outfile<<"orphan_number: "<<orphan_number<<"plin_leaf_nums "<<plin_leaf_nums<<"rate "<<1.0*orphan_number/plin_leaf_nums<<std::endl;

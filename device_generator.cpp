@@ -130,6 +130,26 @@ public:
         // 初始化随机数生成器
         rng.seed(std::random_device{}());
     }
+
+    std::vector<CSVRecord> debug_generate_workload(int requests_per_device = 500000) {
+        std::vector<CSVRecord> logs;
+        
+        // 计算总请求数
+        int total_requests = requests_per_device * num_devices * total_cycles;
+        logs.reserve(total_requests);
+        int device_id = 0;
+        
+        // 生成每个周期的请求
+        for (int cycle = 0; cycle < 10000000; ++cycle) {
+            if(cycle %1000000 == 0 ) device_id ++;
+            logs.push_back({0.000237792, device_id, cycle, "find"});
+        }
+        
+        
+        return logs;
+    }
+    
+
     
     std::vector<CSVRecord> generate_workload(int requests_per_device = 500000) {
         std::vector<CSVRecord> logs;
@@ -190,6 +210,10 @@ public:
         for (const auto& record : logs) {
             writer.writeRecord(record);
         }
+        for (const auto& record : logs) {
+            writer.writeRecord(record);
+        }
+        
         
         writer.close();
         std::cout << "工作负载已保存到: " << filepath << std::endl;
@@ -218,16 +242,16 @@ private:
 int main() {
     // 初始化生成器
     WorkloadGenerator generator(
-        20,        // num_devices
-        10000000,   // total_keys one device:500000 device :hot key = 100000
+        10,        // num_devices
+        10000000,   // total_keys one device:100000 device :hot key = 200000
         1.2,       // zipf_param   3000000*30
         30,        // cycle_duration
-        10,         // total_cycles
+        4,         // total_cycles
         "./data"  // output_dir
     );
     
     // 300000 * 20 *2 = 40 * 300000 = 12000000   precache
-    auto workload = generator.generate_workload(300000); 
+    auto workload = generator.generate_workload(1000000); 
     
     // 保存工作负载
     std::string log_file = generator.save_workload(workload, "workload_log.csv");

@@ -612,13 +612,14 @@ void generate_find_command(std::string filename){
 }
 
 void generate_bulk_load(){
-    std::ofstream outfile("Data.txt");
+    std::ofstream outfile("Data2.txt");
     if (!outfile.is_open()) {
         std::cerr << "Error opening file: Data.txt"<< std::endl;
         return ;
     }
 
     std::normal_distribution<_key_t> key_dist(0, 1e10);
+    // std::uniform_real_distribution<_key_t>key_dist(-50332314890.551338727041233,50332314890.551338727041233);    //debug
     std::uniform_int_distribution<_payload_t> payload_dist(0,1e9);
     std::mt19937 key_gen(time(NULL));
     std::mt19937 payload_gen(time(NULL));
@@ -800,6 +801,7 @@ void* handle_client(void *client_socket) {
     double cache_hit_rate = 0.0;
 
     int spin_count = 0;
+    auto end_time2 = std::chrono::high_resolution_clock::now();
     while (true) {
         //block the plin_server during the prediction
         while(test_index.db_logger.plin_server_block){
@@ -816,9 +818,17 @@ void* handle_client(void *client_socket) {
         }
         buffer[len] = '\0';
         std::string command(buffer);
+
         index++;
-        if(index % 100000 == 0) std::cout<<index<<std::endl;
-        if((cache_hit_count + cache_miss_count) % 1000 == 0 &&  (cache_hit_count + cache_miss_count) != 0) {
+        if(index % 100000 == 0){
+            auto end_time1 = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time1 - end_time2);
+            double microseconds_per_operation = static_cast<double>(duration.count());
+            std::cout<<"count "<<index<<" cost_time"<<microseconds_per_operation<<std::endl;
+            // auto end_time2 =end_time1; bug big bug
+            end_time2 = end_time1;
+        }
+        if((cache_hit_count + cache_miss_count) % 100000 == 0 &&  (cache_hit_count + cache_miss_count) != 0) {
             double cache_hit_rate = 1.0 *cache_hit_count/(cache_hit_count + cache_miss_count);
             std::cout<<"cache_hit_rate"<< cache_hit_rate<<std::endl;
         }
@@ -841,23 +851,25 @@ void* handle_client(void *client_socket) {
             tok.push_back(command.substr(p));   // 最后一段
 
             CSVRecord log_record;
-            log_record.device_id = std::stoi(tok[1]);
-            log_record.target_pos = std::stoi(tok[2]);
-            log_record.logic_id = std::stoi(tok[3]);
+            log_record.device_id = std::stoi(tok[2]);
+            log_record.target_pos = std::stoi(tok[3]);
+            log_record.logic_id = std::stoi(tok[4]);
             log_record.operation = "READ";
-            log_record.timestamp = get_current_timestamp_milliseconds();
+            // log_record.timestamp = get_current_timestamp_seconds();
+            log_record.timestamp = std::stod(tok[1]);
             log_record.target_key = keys[log_record.target_pos];
 
             _key_t target_key = keys[log_record.target_pos];
             _payload_t answer;
             std::string response;
            
-            if(test_index.db_logger.prehot_cache){
+            // bool debug = false;
+            if(test_index.db_logger.prehot_cache ){
                 // std::unordered_map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
-                std::map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
+                // std::map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
                 // if(hot_map_.find(target_key) != hot_map_.end() &&
                 //     hot_map_[target_key] == payloads[log_record.target_pos]){
-                if( hot_map_[target_key] == payloads[log_record.target_pos]){
+                if( test_index.db_logger.hot_map_[target_key] == payloads[log_record.target_pos]){
                     cache_hit_count ++;
                     response = "Success!";
                 }else{
@@ -988,6 +1000,7 @@ void Server(){
 
 int main(void){
     // generate_delete_file();
+    // generate_bulk_load();
     Server();
     return 0;
 }

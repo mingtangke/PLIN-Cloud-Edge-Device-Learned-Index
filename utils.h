@@ -112,7 +112,7 @@ static void model_correction(double& slope, float& intercept, uint64_t size, _ke
 
 
 struct CSVRecord {
-    long long timestamp;
+    double timestamp;
     int device_id;
     int target_pos;
     std::string operation;
@@ -122,8 +122,8 @@ struct CSVRecord {
 };
 
 
-long long get_current_timestamp_milliseconds() {
+long long get_current_timestamp_seconds() {
     auto now = std::chrono::system_clock::now();
     auto duration = now.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    return std::chrono::duration_cast<std::chrono::seconds>(duration).count();
 }
