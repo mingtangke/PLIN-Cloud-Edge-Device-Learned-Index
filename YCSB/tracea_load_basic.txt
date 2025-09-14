@@ -1,0 +1,56 @@
+[INFO] Scanning for projects...
+[ERROR] [ERROR] Some problems were encountered while processing the POMs:
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/elasticsearch of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/elasticsearch5 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/foundationdb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/geode of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googlebigtable of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googlebigtable2 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googledatastore of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/griddb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/hbase1 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/hbase2 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/ignite of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/maprdb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/maprjsondb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/postgrenosql of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/rados of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/rest of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/riak of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/s3 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/seaweedfs of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/scylla of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/solr7 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+[ERROR] Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/zookeeper of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist @ 
+ @ 
+[ERROR] The build could not read 1 project -> [Help 1]
+[ERROR]   
+[ERROR]   The project site.ycsb:root:0.18.0-SNAPSHOT (/home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml) has 22 errors
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/elasticsearch of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/elasticsearch5 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/foundationdb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/geode of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googlebigtable of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googlebigtable2 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/googledatastore of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/griddb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/hbase1 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/hbase2 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/ignite of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/maprdb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/maprjsondb of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/postgrenosql of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/rados of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/rest of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/riak of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/s3 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/seaweedfs of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/scylla of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/solr7 of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR]     Child module /home/ming/桌面/PLIN-N /PLIN-N/YCSB/zookeeper of /home/ming/桌面/PLIN-N /PLIN-N/YCSB/pom.xml does not exist
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/ProjectBuildingException
