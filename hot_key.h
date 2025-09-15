@@ -255,6 +255,7 @@
 #include "utils.h"
 #include <sstream>
 #include <future>
+#include <set>
 
 class DatabaseLogger {
 
@@ -283,12 +284,17 @@ private:
     std::thread comm_thread_;
     std::atomic<bool> running_{false};
 
-    bool retrain = false;
-    int start_index = 0;
-    int end_index = 0;
-    int transform_count = 0;
+    bool fine_retrain = false;  //model prediction ，fine turning
+    bool all_retrain = false;   //retarin all the model according to the relateed workload and log_record
+    bool init_train = false;    //first train the model
+
+    size_t start_index = 0;
+    size_t end_index = 0;
+    size_t last_trian_index = 0;
+    // size_t transform_count = 0;
     bool transfer_complete = false;
 
+    std::set<int> predicted_device;
     // 设备热键频率统计
     std::unordered_map<int, std::unordered_map<_key_t, _payload_t>> device_key_freq_;
     std::mutex freq_mutex_;
@@ -318,6 +324,7 @@ private:
     void communication_thread();
     void compute_hot_keys_from_log(int start_idx, int end_idx);
     std::vector<_key_t> get_hot_keys_for_device(int device_id, size_t max_keys);
+    bool judge_retrain_all(int real_id);
 };
 
 
@@ -455,11 +462,19 @@ void DatabaseLogger::stop() {
     }
 }
 
+
+bool DatabaseLogger::judge_retrain_all(int real_id){
+    auto item = predicted_device.find(real_id);
+    if(item == predicted_device.end()){
+        all_retrain = true;
+    }
+}
+
 void DatabaseLogger::communication_thread() {
     std::vector<char> buffer(MAX_BUFFER_SIZE, 0);
     // std::ofstream hotkey_file("//home//ming//桌面//PLIN-N //PLIN-N//data//hot_key.csv", std::ios::app);
     // hotkey_file << 'hot_key_count' << transform_count << "\n";
-    transform_count++;
+    // transform_count++;
     std::cout << "Communication thread started" << std::endl;
 
     struct timeval tv;
@@ -473,18 +488,34 @@ void DatabaseLogger::communication_thread() {
         if(cache_operate > CACHE_RETRAIN_NUM && (1.0*cache_hit/cache_operate < CACHE_RETRAIN_RATE)){
             cache_operate = 0;
             cache_hit_rate = 0;
-            retrain = true;
+            fine_retrain = true;
         }
-        if ((start_index == 0 && end_index >= HOT_CACHE) || retrain) {
+
+        if((start_index == 0 && end_index >= HOT_CACHE)){
+            init_train = true;
+        }
+
+
+        if (init_train || fine_retrain || all_retrain) {
             plin_server_block = true;
             std::string message = "";
-            if(retrain){
+            if(fine_retrain){
                 message = "ADJUST:" + std::to_string(start_index) + ":" + std::to_string(end_index);
-                retrain = false;
-            }else{
-            message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
+                fine_retrain = false;
+            }else if(all_retrain){
+                std::cout<<"The workload model has changed!"<<std::endl;
+                message = "INDEX:" + std::to_string(last_trian_index) + ":" + std::to_string(end_index);
+                start_index = end_index;
+                all_retrain = false;
             }
-            
+            else{
+                assert(start_index == 0);
+                message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
+                last_trian_index = end_index;
+                init_train = false;
+            }
+            start_index = end_index;
+
             std::cout << "Send to python: " << message << std::endl;
             ssize_t sent_bytes = send(sockfd_, message.c_str(), message.length(), 0);
             if (sent_bytes == -1) {
@@ -547,7 +578,9 @@ void DatabaseLogger::communication_thread() {
                 int device2 = std::stoi(devices_str.substr(comma_pos + 1));
                 
                 std::cout << "Received predicted devices: " << device1 << ", " << device2 << std::endl;
-                
+                predicted_device.emplace(device1);
+                predicted_device.emplace(device2);
+
                 // device 2 key
                 std::vector<_key_t> hot_keys1 = get_hot_keys_for_device(device1, HOT_KEY_NUM);
                 for (_key_t key : hot_keys1) {
