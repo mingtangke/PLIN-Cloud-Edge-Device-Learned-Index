@@ -269,6 +269,10 @@ public:
 
     bool prehot_cache = false;
     bool plin_server_block = false; //currently block during prediction
+
+    size_t cache_hit = 0;
+    size_t cache_operate = 0;
+    double cache_hit_rate = 0;
     
     std::unordered_map<_key_t,_payload_t> hot_map_;
     std::unordered_map<_key_t,_payload_t> log_map_;
@@ -297,12 +301,15 @@ private:
     size_t MAX_BUFFER_SIZE = 1000000;
     size_t MAX_QUEUE_BUFFER_SIZE = 50000;
     size_t HOT_KEY_NUM = 50000;
+    size_t CACHE_RETRAIN_NUM = 10000;
+    double CACHE_RETRAIN_RATE = 0.85;
     std::ofstream log_file_;
     std::string log_file_path_;
 
     int sockfd_{-1};
     std::string python_host_;
     int python_port_;
+
 
     // 异步计算热键的future
     std::future<void> hot_keys_future_;
@@ -345,11 +352,8 @@ void DatabaseLogger::compute_hot_keys_from_log(int start_idx, int end_idx) {
     
     std::string line;
     int current_line = 0;
-    
-    // 跳过标题行
+
     std::getline(log_file, line);
-    
-    // 读取指定范围内的日志记录
     while (std::getline(log_file, line) && current_line <= end_idx) {
         if (current_line >= start_idx) {
             std::istringstream iss(line);
@@ -387,17 +391,11 @@ std::vector<_key_t> DatabaseLogger::get_hot_keys_for_device(int device_id, size_
     }
     
     auto& key_freq = device_key_freq_[device_id];
-    
-    // 将键值对转换为向量以便排序
     std::vector<std::pair<_key_t, int>> key_freq_vec(key_freq.begin(), key_freq.end());
-    
-    // 按频率降序排序
     std::sort(key_freq_vec.begin(), key_freq_vec.end(),
         [](const std::pair<_key_t, int>& a, const std::pair<_key_t, int>& b) {
             return a.second > b.second;
         });
-    
-    // 提取前max_keys个热键
     std::vector<_key_t> hot_keys;
     for (size_t i = 0; i < std::min(max_keys, key_freq_vec.size()); i++) {
         hot_keys.push_back(key_freq_vec[i].first);
@@ -472,17 +470,26 @@ void DatabaseLogger::communication_thread() {
     std::string message_str = "";
 
     while (running_) {
+        if(cache_operate > CACHE_RETRAIN_NUM && (1.0*cache_hit/cache_operate < CACHE_RETRAIN_RATE)){
+            cache_operate = 0;
+            cache_hit_rate = 0;
+            retrain = true;
+        }
         if ((start_index == 0 && end_index >= HOT_CACHE) || retrain) {
-            retrain = false;
             plin_server_block = true;
+            std::string message = "";
+            if(retrain){
+                message = "ADJUST:" + std::to_string(start_index) + ":" + std::to_string(end_index);
+                retrain = false;
+            }else{
+            message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
+            }
             
-            std::string message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
             std::cout << "Send to python: " << message << std::endl;
             ssize_t sent_bytes = send(sockfd_, message.c_str(), message.length(), 0);
             if (sent_bytes == -1) {
                 perror("send failed");
             } else {
-                // 在发送消息后，异步计算热键
                 hot_keys_calculated_ = false;
                 // hot_keys_future_ = std::async(std::launch::async, 
                 //     &DatabaseLogger::compute_hot_keys_from_log, this, start_index, end_index);
@@ -523,7 +530,6 @@ void DatabaseLogger::communication_thread() {
         }
 
         if(message_str.find("END") != std::string::npos && message_str.find("DEVICES:") == 0 && hot_keys_calculated_) {
-            // // 等待热键计算完成（如果尚未完成）
             // if (hot_keys_future_.valid() && hot_keys_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             //     std::cout << "Waiting for hot keys calculation to complete..." << std::endl;
             //     hot_keys_future_.wait();
@@ -531,10 +537,9 @@ void DatabaseLogger::communication_thread() {
             
             std::lock_guard<std::mutex> lock(hot_map_mutex_);
             hot_map_.clear();
-            hot_map_.reserve(HOT_KEY_NUM * 2); // 为两个设备预留空间
+            hot_map_.reserve(HOT_KEY_NUM * 2 * 2); // better O(n)/O(1)
             
-            // 解析设备ID
-            std::string devices_str = message_str.substr(8, message_str.length() - 11); // 去掉"DEVICES:"和"END"
+            std::string devices_str = message_str.substr(8, message_str.length() - 11); // remove "DEVICES:" && "END"
             size_t comma_pos = devices_str.find(',');
             
             if (comma_pos != std::string::npos) {
@@ -543,7 +548,7 @@ void DatabaseLogger::communication_thread() {
                 
                 std::cout << "Received predicted devices: " << device1 << ", " << device2 << std::endl;
                 
-                // 获取设备1的热键
+                // device 2 key
                 std::vector<_key_t> hot_keys1 = get_hot_keys_for_device(device1, HOT_KEY_NUM);
                 for (_key_t key : hot_keys1) {
                     auto it = log_map_.find(key);
@@ -553,7 +558,7 @@ void DatabaseLogger::communication_thread() {
                     }
                 }
                 
-                // 获取设备2的热键
+                // device 1 key
                 std::vector<_key_t> hot_keys2 = get_hot_keys_for_device(device2, HOT_KEY_NUM);
                 for (_key_t key : hot_keys2) {
                     auto it = log_map_.find(key);

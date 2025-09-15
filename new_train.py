@@ -934,12 +934,10 @@ class DeviceAccessPredictor:
     
     def simply_predict(self, end_idx):
         recent_sequence = self.get_recent_sequence(end_idx)
-        print(f"Recent sequence available for prediction: {len(recent_sequence) if recent_sequence is not None else 0}")
-            
+        print(f"Recent sequence available for prediction: {len(recent_sequence) if recent_sequence is not None else 0}")    
         if recent_sequence is not None and len(recent_sequence) >= self.sequence_length:
             first_device, second_device = self.predict_top_two_devices(recent_sequence)
             if first_device is not None and second_device is not None:
-                # 发送预测的设备ID给C++端
                 message = f"DEVICES:{first_device},{second_device}END"
                 try:
                     self.conn.send(message.encode('utf-8'))

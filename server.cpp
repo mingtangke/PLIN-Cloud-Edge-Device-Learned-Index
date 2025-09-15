@@ -796,8 +796,8 @@ void* handle_client(void *client_socket) {
     int index = 0;
     uint32_t rebuild_time_temp = 0;
 
-    uint32_t cache_hit_count = 0;
-    uint32_t cache_miss_count = 0;
+    // uint32_t cache_hit_count = 0;
+    // uint32_t cache_miss_count = 0;
     double cache_hit_rate = 0.0;
 
     int spin_count = 0;
@@ -869,11 +869,11 @@ void* handle_client(void *client_socket) {
                 // std::map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
                 // if(hot_map_.find(target_key) != hot_map_.end() &&
                 //     hot_map_[target_key] == payloads[log_record.target_pos]){
+                test_index.db_logger.cache_operate ++;
                 if( test_index.db_logger.hot_map_[target_key] == payloads[log_record.target_pos]){
-                    cache_hit_count ++;
+                    test_index.db_logger.cache_hit ++;
                     response = "Success!";
                 }else{
-                    cache_miss_count ++;
                     int result = test_index.find_through_net(target_key,answer,log_record.logic_id);
                     if(!result || answer!=payloads[log_record.target_pos]) response = "Failure!";
                     else  response = "Success!";
