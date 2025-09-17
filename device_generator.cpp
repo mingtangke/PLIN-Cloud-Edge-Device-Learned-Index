@@ -131,71 +131,55 @@ public:
         rng.seed(std::random_device{}());
     }
 
-    std::vector<CSVRecord> debug_generate_workload(int requests_per_device = 500000) {
-        std::vector<CSVRecord> logs;
+    // std::vector<CSVRecord> debug_generate_workload(int requests_per_device = 500000) {
+    //     std::vector<CSVRecord> logs;
         
-        // 计算总请求数
-        int total_requests = requests_per_device * num_devices * total_cycles;
-        logs.reserve(total_requests);
-        int device_id = 0;
+    //     // 计算总请求数
+    //     int total_requests = requests_per_device * num_devices * total_cycles;
+    //     logs.reserve(total_requests);
+    //     int device_id = 0;
         
-        // 生成每个周期的请求
-        for (int cycle = 0; cycle < 10000000; ++cycle) {
-            if(cycle %1000000 == 0 ) device_id ++;
-            logs.push_back({0.000237792, device_id, cycle, "find"});
-        }
+    //     // 生成每个周期的请求
+    //     for (int cycle = 0; cycle < 10000000; ++cycle) {
+    //         if(cycle %1000000 == 0 ) device_id ++;
+    //         logs.push_back({0.000237792, device_id, cycle, "find"});
+    //     }
         
         
-        return logs;
-    }
+    //     return logs;
+    // }
     
 
     
     std::vector<CSVRecord> generate_workload(int requests_per_device = 500000) {
         std::vector<CSVRecord> logs;
-        
-        // 计算总请求数
         int total_requests = requests_per_device * num_devices * total_cycles;
         logs.reserve(total_requests);
-        
-        // 生成每个周期的请求
+    
         for (int cycle = 0; cycle < total_cycles; ++cycle) {
-            // 周期开始和结束时间
             double cycle_start = cycle * cycle_duration * num_devices;
             double cycle_end = (cycle + 1) * cycle_duration * num_devices;
-            
-            // 为每个设备生成请求
             for (int device_id = 1; device_id <= num_devices; ++device_id) {
-                // 设备在周期内的开始和结束时间
+               
                 double device_start = cycle_start + (device_id - 1) * cycle_duration;
                 double device_end = device_start + cycle_duration;
-                
-                // 获取该设备的键范围
                 auto [start_key, end_key] = device_key_ranges[device_id];
-                
-                // 创建离散分布用于选择键
+            
                 std::discrete_distribution<int> dist(
                     device_access_probs[device_id].begin(), 
                     device_access_probs[device_id].end()
                 );
-                
-                // 生成当前设备的请求
+        
                 for (int i = 0; i < requests_per_device; ++i) {
-                    // 生成时间戳 (在设备时间段内均匀分布)
                     std::uniform_real_distribution<double> time_dist(0, cycle_duration);
                     double timestamp = device_start + time_dist(rng);
-                    
-                    // 选择键 (根据Zipf分布)
                     int key_idx = dist(rng);
-                    int key = start_key + key_idx;  // 计算实际的键值
-                    
-                    // 记录日志
+                    int key = start_key + key_idx;
                     logs.push_back({timestamp, device_id, key, "find"});
                 }
             }
         }
-        
-        // 按时间戳排序
+
         std::sort(logs.begin(), logs.end(), [](const CSVRecord& a, const CSVRecord& b) {
             return a.timestamp < b.timestamp;
         });
@@ -210,11 +194,7 @@ public:
         for (const auto& record : logs) {
             writer.writeRecord(record);
         }
-        for (const auto& record : logs) {
-            writer.writeRecord(record);
-        }
-        
-        
+    
         writer.close();
         std::cout << "工作负载已保存到: " << filepath << std::endl;
         return filepath;
@@ -243,7 +223,7 @@ int main() {
     // 初始化生成器
     WorkloadGenerator generator(
         10,        // num_devices
-        10000000,   // total_keys one device:100000 device :hot key = 200000
+     10000000,   // total_keys one device:100000 device :hot key = 200000
         1.2,       // zipf_param   3000000*30
         30,        // cycle_duration
         4,         // total_cycles

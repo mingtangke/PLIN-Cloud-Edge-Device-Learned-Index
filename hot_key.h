@@ -1,240 +1,240 @@
-// #pragma once
-// #include <fstream>
-// #include <string>
-// #include <vector>
-// #include <thread>
-// #include <mutex>
-// #include <atomic>
-// #include <queue>
-// #include <cstring>
-// #include <sys/socket.h>
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-// #include <unistd.h>
-// #include "parameters.h"
-// #include <unordered_map>
-// #include <map>
-// #include "utils.h"
+// // #pragma once
+// // #include <fstream>
+// // #include <string>
+// // #include <vector>
+// // #include <thread>
+// // #include <mutex>
+// // #include <atomic>
+// // #include <queue>
+// // #include <cstring>
+// // #include <sys/socket.h>
+// // #include <netinet/in.h>
+// // #include <arpa/inet.h>
+// // #include <unistd.h>
+// // #include "parameters.h"
+// // #include <unordered_map>
+// // #include <map>
+// // #include "utils.h"
 
-// class DatabaseLogger {
+// // class DatabaseLogger {
 
-// public:
-//     DatabaseLogger(const std::string& log_file, const std::string& python_host, int python_port);
-//     ~DatabaseLogger();
+// // public:
+// //     DatabaseLogger(const std::string& log_file, const std::string& python_host, int python_port);
+// //     ~DatabaseLogger();
     
-//     void start();
-//     void try_start();
-//     void stop();
-//     void log_query(CSVRecord &log_record);
+// //     void start();
+// //     void try_start();
+// //     void stop();
+// //     void log_query(CSVRecord &log_record);
 
-//     bool prehot_cache = false;
-//     bool plin_server_block = false; //currently block during prediction
+// //     bool prehot_cache = false;
+// //     bool plin_server_block = false; //currently block during prediction
     
-//     std::unordered_map<_key_t,_payload_t> hot_map_;
-//     // std::map<_key_t,_payload_t>hot_map_;
-//     std::unordered_map<_key_t,_payload_t> log_map_;
-//     _key_t *keys;
+// //     std::unordered_map<_key_t,_payload_t> hot_map_;
+// //     // std::map<_key_t,_payload_t>hot_map_;
+// //     std::unordered_map<_key_t,_payload_t> log_map_;
+// //     _key_t *keys;
 
-// private:
+// // private:
     
-//     // std::thread logging_thread_;
-//     std::thread comm_thread_;
-//     std::atomic<bool> running_{false};
+// //     // std::thread logging_thread_;
+// //     std::thread comm_thread_;
+// //     std::atomic<bool> running_{false};
 
-//     bool retrain = false;
-//     int start_index = 0;
-//     int end_index = 0;
-//     int transform_count = 0;
-//     bool transfer_complete = false;
+// //     bool retrain = false;
+// //     int start_index = 0;
+// //     int end_index = 0;
+// //     int transform_count = 0;
+// //     bool transfer_complete = false;
 
     
     
     
-//     std::mutex log_mutex_;
-//     std::queue<CSVRecord> log_queue_;
-//     std::mutex hot_map_mutex_;
+// //     std::mutex log_mutex_;
+// //     std::queue<CSVRecord> log_queue_;
+// //     std::mutex hot_map_mutex_;
     
-//     // size_t HOT_CACHE = 3000000;
-//     size_t HOT_CACHE = 12*1000000 + 50000;  //具体计算过程在device_generator.cpp中 24*1000000
-//     // size_t HOT_CACHE = 20000000; //for debug
-//     size_t MAX_BUFFER_SIZE = 1000000;
-//     size_t MAX_QUEUE_BUFFER_SIZE = 50000;
-//     size_t HOT_KEY_NUM = 50000;
-//     std::ofstream log_file_;
+// //     // size_t HOT_CACHE = 3000000;
+// //     size_t HOT_CACHE = 12*1000000 + 50000;  //具体计算过程在device_generator.cpp中 24*1000000
+// //     // size_t HOT_CACHE = 20000000; //for debug
+// //     size_t MAX_BUFFER_SIZE = 1000000;
+// //     size_t MAX_QUEUE_BUFFER_SIZE = 50000;
+// //     size_t HOT_KEY_NUM = 50000;
+// //     std::ofstream log_file_;
 
-//     int sockfd_{-1};
-//     std::string python_host_;
-//     int python_port_;
+// //     int sockfd_{-1};
+// //     std::string python_host_;
+// //     int python_port_;
 
-//     void communication_thread();
-// };
-
-
-// DatabaseLogger::DatabaseLogger(const std::string& log_file, const std::string& python_host, int python_port)
-//     : python_host_(python_host), python_port_(python_port) {
-//         log_file_.open(log_file, std::ios::app);
-//         if (!log_file_.is_open()) {
-//         throw std::runtime_error("Failed to open log file");
-//         }
-//         log_file_<< "timestamp,device_id,key,operation\n";
-// }
-
-// DatabaseLogger::~DatabaseLogger() {
-//     stop();
-//     if (log_file_.is_open()) {
-//         log_file_.close();
-//     }
-//     if (sockfd_ != -1) {
-//         close(sockfd_);
-//     }
-// }
+// //     void communication_thread();
+// // };
 
 
-// void DatabaseLogger::log_query( CSVRecord &log_record){
-//     std::lock_guard<std::mutex> lock(log_mutex_);
-//     _key_t key = log_record.target_key;
-//     _payload_t payload = log_record.payload;
-//     log_queue_.push(log_record);
-//     log_map_[key] = payload;
+// // DatabaseLogger::DatabaseLogger(const std::string& log_file, const std::string& python_host, int python_port)
+// //     : python_host_(python_host), python_port_(python_port) {
+// //         log_file_.open(log_file, std::ios::app);
+// //         if (!log_file_.is_open()) {
+// //         throw std::runtime_error("Failed to open log file");
+// //         }
+// //         log_file_<< "timestamp,device_id,key,operation\n";
+// // }
 
-//     if(log_queue_.size() > MAX_QUEUE_BUFFER_SIZE){    //a big bug for me
-//         while( !log_queue_.empty()){
-//             // log_file_ << log_queue_.front().timestamp << ","
-//             //  << log_queue_.front().device_id << ","
-//             //  << std::fixed <<log_queue_.front().target_key << ","
-//             //  << log_queue_.front().operation << "\n";
-
-//             log_queue_.pop();
-//         }
-//         // log_file_.flush();
-//         end_index = end_index + MAX_QUEUE_BUFFER_SIZE - 1;
-//         // std::cout<<"end_index: "<<end_index<<std::endl;
-//     }
-// }
+// // DatabaseLogger::~DatabaseLogger() {
+// //     stop();
+// //     if (log_file_.is_open()) {
+// //         log_file_.close();
+// //     }
+// //     if (sockfd_ != -1) {
+// //         close(sockfd_);
+// //     }
+// // }
 
 
-// void DatabaseLogger::start() {
-//     running_ = true;
+// // void DatabaseLogger::log_query( CSVRecord &log_record){
+// //     std::lock_guard<std::mutex> lock(log_mutex_);
+// //     _key_t key = log_record.target_key;
+// //     _payload_t payload = log_record.payload;
+// //     log_queue_.push(log_record);
+// //     log_map_[key] = payload;
+
+// //     if(log_queue_.size() > MAX_QUEUE_BUFFER_SIZE){    //a big bug for me
+// //         while( !log_queue_.empty()){
+// //             // log_file_ << log_queue_.front().timestamp << ","
+// //             //  << log_queue_.front().device_id << ","
+// //             //  << std::fixed <<log_queue_.front().target_key << ","
+// //             //  << log_queue_.front().operation << "\n";
+
+// //             log_queue_.pop();
+// //         }
+// //         // log_file_.flush();
+// //         end_index = end_index + MAX_QUEUE_BUFFER_SIZE - 1;
+// //         // std::cout<<"end_index: "<<end_index<<std::endl;
+// //     }
+// // }
+
+
+// // void DatabaseLogger::start() {
+// //     running_ = true;
     
-//     // Setup socket connection to lstm_server
-//     sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
-//     if (sockfd_ < 0) {
-//         throw std::runtime_error("Socket creation failed");
-//     }
+// //     // Setup socket connection to lstm_server
+// //     sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
+// //     if (sockfd_ < 0) {
+// //         throw std::runtime_error("Socket creation failed");
+// //     }
     
-//     struct sockaddr_in serv_addr;
-//     serv_addr.sin_family = AF_INET;
-//     serv_addr.sin_port = htons(python_port_);
+// //     struct sockaddr_in serv_addr;
+// //     serv_addr.sin_family = AF_INET;
+// //     serv_addr.sin_port = htons(python_port_);
     
-//     if (inet_pton(AF_INET, python_host_.c_str(), &serv_addr.sin_addr) <= 0) {
-//         throw std::runtime_error("Invalid address/Address not supported");
-//     }
+// //     if (inet_pton(AF_INET, python_host_.c_str(), &serv_addr.sin_addr) <= 0) {
+// //         throw std::runtime_error("Invalid address/Address not supported");
+// //     }
     
-//     if (connect(sockfd_, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-//         throw std::runtime_error("Connection to Python failed");
-//     }
-//     comm_thread_ = std::thread(&DatabaseLogger::communication_thread, this);
-// }
+// //     if (connect(sockfd_, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+// //         throw std::runtime_error("Connection to Python failed");
+// //     }
+// //     comm_thread_ = std::thread(&DatabaseLogger::communication_thread, this);
+// // }
 
-// void DatabaseLogger::stop() {
-//     running_ = false;
-//     if (comm_thread_.joinable()) {
-//         comm_thread_.join();
-//     }
-// }
+// // void DatabaseLogger::stop() {
+// //     running_ = false;
+// //     if (comm_thread_.joinable()) {
+// //         comm_thread_.join();
+// //     }
+// // }
 
 
 
-// void DatabaseLogger::communication_thread() {
+// // void DatabaseLogger::communication_thread() {
 
-//     std::vector<char> buffer(MAX_BUFFER_SIZE, 0);
-//     std::ofstream hotkey_file("//home//ming//桌面//PLIN-N //PLIN-N//data//hot_key.csv", std::ios::app);
-//     hotkey_file << 'hot_key_count' << transform_count << "\n";
-//     transform_count++;
-//     std::cout << "Communication thread started" << std::endl;
+// //     std::vector<char> buffer(MAX_BUFFER_SIZE, 0);
+// //     std::ofstream hotkey_file("//home//ming//桌面//PLIN-N //PLIN-N//data//hot_key.csv", std::ios::app);
+// //     hotkey_file << 'hot_key_count' << transform_count << "\n";
+// //     transform_count++;
+// //     std::cout << "Communication thread started" << std::endl;
 
-//     struct timeval tv;
-//     tv.tv_sec = 0;
-//     tv.tv_usec = 100000; // 100毫秒
+// //     struct timeval tv;
+// //     tv.tv_sec = 0;
+// //     tv.tv_usec = 100000; // 100毫秒
 
-//     fd_set readfds;
-//     std::string hot_message = "";
+// //     fd_set readfds;
+// //     std::string hot_message = "";
 
-//     while (running_) {
-//         if (start_index == 0 && end_index >= HOT_CACHE || retrain) {
-//             retrain = false;
-//             plin_server_block = true;
-//             std::string message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
-//             std::cout << "Send to python: " << message << std::endl;
-//             ssize_t sent_bytes = send(sockfd_, message.c_str(), message.length(), 0);
-//             if (sent_bytes == -1) {
-//                 perror("send failed");
-//             } else {
-//                 start_index = end_index + 1;
-//             }
-//         }
+// //     while (running_) {
+// //         if (start_index == 0 && end_index >= HOT_CACHE || retrain) {
+// //             retrain = false;
+// //             plin_server_block = true;
+// //             std::string message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
+// //             std::cout << "Send to python: " << message << std::endl;
+// //             ssize_t sent_bytes = send(sockfd_, message.c_str(), message.length(), 0);
+// //             if (sent_bytes == -1) {
+// //                 perror("send failed");
+// //             } else {
+// //                 start_index = end_index + 1;
+// //             }
+// //         }
 
-//         FD_ZERO(&readfds);
-//         FD_SET(sockfd_, &readfds);
+// //         FD_ZERO(&readfds);
+// //         FD_SET(sockfd_, &readfds);
         
-//         int activity = select(sockfd_ + 1, &readfds, NULL, NULL, &tv);
+// //         int activity = select(sockfd_ + 1, &readfds, NULL, NULL, &tv);
         
-//         if (activity < 0) {
-//             perror("select error");
-//             break;
-//         } else if (activity == 0) {
-//             continue;
-//         } else {
-//             std::cout << "C++ received python data" <<std::endl;
-//             int valread = read(sockfd_, buffer.data(), MAX_BUFFER_SIZE - 1);
-//             if (valread > 0) {
-//                 buffer[valread] = '\0';
-//                 std::string message(buffer.data());
-//                 if (!transfer_complete) {
-//                     hot_message += message;  
-//                 }
-//                 if (message.find("END") != std::string::npos) {
-//                     transfer_complete = true;
-//                 }
-//             } else if (valread == 0) {
-//                 std::cout << "Python connection closed" << std::endl;
-//                 break;
-//             } else {
-//                 perror("read error");
-//                 break;
-//             }
-//         }
+// //         if (activity < 0) {
+// //             perror("select error");
+// //             break;
+// //         } else if (activity == 0) {
+// //             continue;
+// //         } else {
+// //             std::cout << "C++ received python data" <<std::endl;
+// //             int valread = read(sockfd_, buffer.data(), MAX_BUFFER_SIZE - 1);
+// //             if (valread > 0) {
+// //                 buffer[valread] = '\0';
+// //                 std::string message(buffer.data());
+// //                 if (!transfer_complete) {
+// //                     hot_message += message;  
+// //                 }
+// //                 if (message.find("END") != std::string::npos) {
+// //                     transfer_complete = true;
+// //                 }
+// //             } else if (valread == 0) {
+// //                 std::cout << "Python connection closed" << std::endl;
+// //                 break;
+// //             } else {
+// //                 perror("read error");
+// //                 break;
+// //             }
+// //         }
 
-//         if(hot_message.find("END") != std::string::npos && hot_message.find("HOT_KEYS:") == 0 ){
-//             std::lock_guard<std::mutex> lock(hot_map_mutex_);
-//             hot_map_.clear();
-//             hot_map_.reserve(HOT_KEY_NUM * 3); //提高性能
-//             std::string keys_str = hot_message.substr(9, hot_message.length() - 12);
-//             size_t pos = 0;
+// //         if(hot_message.find("END") != std::string::npos && hot_message.find("HOT_KEYS:") == 0 ){
+// //             std::lock_guard<std::mutex> lock(hot_map_mutex_);
+// //             hot_map_.clear();
+// //             hot_map_.reserve(HOT_KEY_NUM * 3); //提高性能
+// //             std::string keys_str = hot_message.substr(9, hot_message.length() - 12);
+// //             size_t pos = 0;
 
-//             while ((pos = keys_str.find(",")) != std::string::npos) {
-//                 _key_t key =  keys[std::stoi(keys_str.substr(0, pos))];
-//                 _payload_t payload = log_map_[key]; 
-//                 keys_str.erase(0, pos + 1);
-//                 hot_map_[key] = payload;
-//                 // hotkey_file << std::fixed << key << " "<<payload<<"\n";
-//             }
+// //             while ((pos = keys_str.find(",")) != std::string::npos) {
+// //                 _key_t key =  keys[std::stoi(keys_str.substr(0, pos))];
+// //                 _payload_t payload = log_map_[key]; 
+// //                 keys_str.erase(0, pos + 1);
+// //                 hot_map_[key] = payload;
+// //                 // hotkey_file << std::fixed << key << " "<<payload<<"\n";
+// //             }
 
-//             _key_t key = keys[std::stoi(keys_str)];
-//             _payload_t payload = log_map_[key];
-//              hot_map_[key] = payload;
+// //             _key_t key = keys[std::stoi(keys_str)];
+// //             _payload_t payload = log_map_[key];
+// //              hot_map_[key] = payload;
 
-//             // hotkey_file << std::fixed << key <<" "<<payload<<"\n";
-//             // hotkey_file.close();
+// //             // hotkey_file << std::fixed << key <<" "<<payload<<"\n";
+// //             // hotkey_file.close();
 
-//             plin_server_block = false ; //main block recovery
-//             prehot_cache = true;
-//             transfer_complete = false;
+// //             plin_server_block = false ; //main block recovery
+// //             prehot_cache = true;
+// //             transfer_complete = false;
 
-//             hot_message = "";
-//         }
-//     }
-// }
+// //             hot_message = "";
+// //         }
+// //     }
+// // }
 #pragma once
 #include <fstream>
 #include <string>
@@ -256,6 +256,7 @@
 #include <sstream>
 #include <future>
 #include <set>
+#include <libcuckoo/cuckoohash_map.hh>  // 添加 libcuckoo 头文件
 
 class DatabaseLogger {
 
@@ -267,16 +268,19 @@ public:
     void try_start();
     void stop();
     void log_query(CSVRecord &log_record);
+    void judge_retrain_all(int real_id);
 
     bool prehot_cache = false;
-    bool plin_server_block = false; //currently block during prediction
+    // bool plin_server_block = false; //currently block during prediction
 
     size_t cache_hit = 0;
     size_t cache_operate = 0;
     double cache_hit_rate = 0;
     
-    std::unordered_map<_key_t,_payload_t> hot_map_;
+    // std::unordered_map<_key_t,_payload_t> hot_map_;
+    libcuckoo::cuckoohash_map<std::string, _payload_t> hot_map_;
     std::unordered_map<_key_t,_payload_t> log_map_;
+    // libcuckoo::cuckoohash_map<_key_t, _payload_t> log_map_;
     _key_t *keys;
 
 private:
@@ -284,31 +288,34 @@ private:
     std::thread comm_thread_;
     std::atomic<bool> running_{false};
 
+    int fine_count = 0;
     bool fine_retrain = false;  //model prediction ，fine turning
     bool all_retrain = false;   //retarin all the model according to the relateed workload and log_record
     bool init_train = false;    //first train the model
 
+    size_t FINE_CHANCE = 3;
     size_t start_index = 0;
     size_t end_index = 0;
     size_t last_trian_index = 0;
-    // size_t transform_count = 0;
     bool transfer_complete = false;
 
     std::set<int> predicted_device;
     // 设备热键频率统计
     std::unordered_map<int, std::unordered_map<_key_t, _payload_t>> device_key_freq_;
+     std::unordered_map<int, std::unordered_map<_key_t, _payload_t>> old_device_key_freq;
     std::mutex freq_mutex_;
     
     std::mutex log_mutex_;
     std::queue<CSVRecord> log_queue_;
     std::mutex hot_map_mutex_;
     
+    size_t LOG_CACHE_DATASET_SIZE = 0.5e7;
     size_t HOT_CACHE = 12*1000000 + 50000;
     size_t MAX_BUFFER_SIZE = 1000000;
     size_t MAX_QUEUE_BUFFER_SIZE = 50000;
     size_t HOT_KEY_NUM = 50000;
-    size_t CACHE_RETRAIN_NUM = 10000;
-    double CACHE_RETRAIN_RATE = 0.85;
+    size_t CACHE_RETRAIN_NUM = 100000;
+    double CACHE_RETRAIN_RATE = 0.83;
     std::ofstream log_file_;
     std::string log_file_path_;
 
@@ -324,7 +331,6 @@ private:
     void communication_thread();
     void compute_hot_keys_from_log(int start_idx, int end_idx);
     std::vector<_key_t> get_hot_keys_for_device(int device_id, size_t max_keys);
-    bool judge_retrain_all(int real_id);
 };
 
 
@@ -348,9 +354,7 @@ DatabaseLogger::~DatabaseLogger() {
 }
 
 void DatabaseLogger::compute_hot_keys_from_log(int start_idx, int end_idx) {
-    std::lock_guard<std::mutex> lock(freq_mutex_);
-    device_key_freq_.clear();
-    
+    old_device_key_freq.clear();
     std::ifstream log_file(log_file_path_);
     if (!log_file.is_open()) {
         std::cerr << "Failed to open log file for reading: " << log_file_path_ << std::endl;
@@ -359,6 +363,7 @@ void DatabaseLogger::compute_hot_keys_from_log(int start_idx, int end_idx) {
     
     std::string line;
     int current_line = 0;
+    if(start_idx < 0) start_idx = 0;
 
     std::getline(log_file, line);
     while (std::getline(log_file, line) && current_line <= end_idx) {
@@ -373,10 +378,10 @@ void DatabaseLogger::compute_hot_keys_from_log(int start_idx, int end_idx) {
                 
                 try {
                     int device_id = std::stoi(device_id_str);
-                    _key_t key = std::stod(key_str);
+                    _key_t key = keys[std::stoi(key_str)];
                     
                     // 更新设备键频率
-                    device_key_freq_[device_id][key]++;
+                    old_device_key_freq[device_id][key]++;
                 } catch (const std::exception& e) {
                     std::cerr << "Error parsing log line: " << line << " - " << e.what() << std::endl;
                 }
@@ -388,6 +393,9 @@ void DatabaseLogger::compute_hot_keys_from_log(int start_idx, int end_idx) {
     log_file.close();
     hot_keys_calculated_ = true;
     std::cout << "Computed hot keys from log lines " << start_idx << " to " << end_idx << std::endl;
+
+    std::lock_guard<std::mutex> lock(freq_mutex_);
+    device_key_freq_ = old_device_key_freq;
 }
 
 std::vector<_key_t> DatabaseLogger::get_hot_keys_for_device(int device_id, size_t max_keys) {
@@ -417,19 +425,19 @@ void DatabaseLogger::log_query(CSVRecord &log_record){
     _payload_t payload = log_record.payload;
     log_queue_.push(log_record);
     log_map_[key] = payload;
+    end_index ++;
 
-    if(log_queue_.size() > MAX_QUEUE_BUFFER_SIZE){
-        while(!log_queue_.empty()){
-            log_file_ << log_queue_.front().timestamp << ","
-             << log_queue_.front().device_id << ","
-             << std::fixed << log_queue_.front().target_key << ","
-             << log_queue_.front().operation << "\n";
+    // if(log_queue_.size() > MAX_QUEUE_BUFFER_SIZE){
+    //     while(!log_queue_.empty()){
+    //         // log_file_ << log_queue_.front().timestamp << ","
+    //         //  << log_queue_.front().device_id << ","
+    //         //  << std::fixed << log_queue_.front().target_key << ","
+    //         //  << log_queue_.front().operation << "\n";
 
-            log_queue_.pop();
-        }
-        log_file_.flush();
-        end_index = end_index + MAX_QUEUE_BUFFER_SIZE - 1;
-    }
+    //         log_queue_.pop();
+    //     }
+    //     log_file_.flush();
+    // }
 }
 
 void DatabaseLogger::start() {
@@ -463,10 +471,25 @@ void DatabaseLogger::stop() {
 }
 
 
-bool DatabaseLogger::judge_retrain_all(int real_id){
+void DatabaseLogger::judge_retrain_all(int real_id){
     auto item = predicted_device.find(real_id);
-    if(item == predicted_device.end()){
-        all_retrain = true;
+    if(item == predicted_device.end() && fine_count >= FINE_CHANCE){
+        // all_retrain = true;
+        prehot_cache = false;
+        // plin_server_block = true;
+        fine_count ++;
+
+        if(fine_count >= FINE_CHANCE){
+            all_retrain = true;
+            fine_count = 0;
+            predicted_device.clear();
+            std::cout<<"All retrain the model according to the workload!"<<std::endl;
+        }else{
+            fine_retrain = true;
+            std::cout<<"debug one"<<std::endl;
+            std::cout<<"Fine retrain the model according to the workload!"<<std::endl;
+        }
+        return ;
     }
 }
 
@@ -487,47 +510,60 @@ void DatabaseLogger::communication_thread() {
     while (running_) {
         if(cache_operate > CACHE_RETRAIN_NUM && (1.0*cache_hit/cache_operate < CACHE_RETRAIN_RATE)){
             cache_operate = 0;
-            cache_hit_rate = 0;
+            cache_hit = 0;
+            std::cout<<"debug one"<<std::endl;
             fine_retrain = true;
         }
 
+        if(cache_operate % 100000 == 0 && cache_operate != 0 ){
+            cache_hit_rate = 1.0 * cache_hit / cache_operate;
+            std::cout<<"cache_hit_rate"<< cache_hit_rate<<std::endl;
+        }
+
         if((start_index == 0 && end_index >= HOT_CACHE)){
+            start_index ++; //prevent repeated training
             init_train = true;
         }
 
-
         if (init_train || fine_retrain || all_retrain) {
-            plin_server_block = true;
+            // plin_server_block = true;
+            bool async_ready = false;
             std::string message = "";
+
             if(fine_retrain){
                 message = "ADJUST:" + std::to_string(start_index) + ":" + std::to_string(end_index);
                 fine_retrain = false;
+
             }else if(all_retrain){
                 std::cout<<"The workload model has changed!"<<std::endl;
                 message = "INDEX:" + std::to_string(last_trian_index) + ":" + std::to_string(end_index);
                 start_index = end_index;
                 all_retrain = false;
+                async_ready = true;
             }
             else{
-                assert(start_index == 0);
                 message = "INDEX:" + std::to_string(start_index) + ":" + std::to_string(end_index);
                 last_trian_index = end_index;
                 init_train = false;
+                // hot_keys_future_ = std::async(std::launch::async, &DatabaseLogger::compute_hot_keys_from_log, this, start_index, end_index);
+                // async_ready = true;
             }
-            start_index = end_index;
 
             std::cout << "Send to python: " << message << std::endl;
             ssize_t sent_bytes = send(sockfd_, message.c_str(), message.length(), 0);
+            prehot_cache = false;
+
             if (sent_bytes == -1) {
                 perror("send failed");
-            } else {
-                hot_keys_calculated_ = false;
-                // hot_keys_future_ = std::async(std::launch::async, 
-                //     &DatabaseLogger::compute_hot_keys_from_log, this, start_index, end_index);
-                compute_hot_keys_from_log(start_index,end_index);
-                start_index = end_index + 1;
+            } else if(async_ready) { //use when rebuild
+                hot_keys_future_ = std::async(std::launch::async, 
+                    &DatabaseLogger::compute_hot_keys_from_log, this, start_index, end_index);
             }
-        }
+        }else if(end_index >= 2*LOG_CACHE_DATASET_SIZE && end_index % LOG_CACHE_DATASET_SIZE == 0){  
+            std::cout<<"Continue to update the device key frequency statistics!"<<std::endl;
+                hot_keys_future_ = std::async(std::launch::async, 
+                    &DatabaseLogger::compute_hot_keys_from_log, this, end_index - 3*LOG_CACHE_DATASET_SIZE, end_index);
+        } //每500w条数据计算一次热键，后台进行。
 
         FD_ZERO(&readfds);
         FD_SET(sockfd_, &readfds);
@@ -560,15 +596,17 @@ void DatabaseLogger::communication_thread() {
             }
         }
 
-        if(message_str.find("END") != std::string::npos && message_str.find("DEVICES:") == 0 && hot_keys_calculated_) {
+        if(message_str.find("END") != std::string::npos && message_str.find("DEVICES:") == 0) {
             // if (hot_keys_future_.valid() && hot_keys_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             //     std::cout << "Waiting for hot keys calculation to complete..." << std::endl;
             //     hot_keys_future_.wait();
             // }
-            
+            //cache_update , rebuild the hot_map_
+
             std::lock_guard<std::mutex> lock(hot_map_mutex_);
             hot_map_.clear();
-            hot_map_.reserve(HOT_KEY_NUM * 2 * 2); // better O(n)/O(1)
+            predicted_device.clear();
+            // hot_map_.rehash(HOT_KEY_NUM * 2); // better O(n)/O(1)
             
             std::string devices_str = message_str.substr(8, message_str.length() - 11); // remove "DEVICES:" && "END"
             size_t comma_pos = devices_str.find(',');
@@ -576,7 +614,6 @@ void DatabaseLogger::communication_thread() {
             if (comma_pos != std::string::npos) {
                 int device1 = std::stoi(devices_str.substr(0, comma_pos));
                 int device2 = std::stoi(devices_str.substr(comma_pos + 1));
-                
                 std::cout << "Received predicted devices: " << device1 << ", " << device2 << std::endl;
                 predicted_device.emplace(device1);
                 predicted_device.emplace(device2);
@@ -586,9 +623,13 @@ void DatabaseLogger::communication_thread() {
                 for (_key_t key : hot_keys1) {
                     auto it = log_map_.find(key);
                     if (it != log_map_.end()) {
-                        hot_map_[key] = it->second;
+                        _payload_t payload = it->second;
+                        std::string input = std::to_string(key);
+                        hot_map_.upsert(input, [payload](_payload_t& val) { val = payload; }, payload);
+                        // hot_map_.upsert(input,payload);
                         // hotkey_file << std::fixed << key << " " << it->second << "\n";
                     }
+                    _payload_t payload;
                 }
                 
                 // device 1 key
@@ -596,23 +637,36 @@ void DatabaseLogger::communication_thread() {
                 for (_key_t key : hot_keys2) {
                     auto it = log_map_.find(key);
                     if (it != log_map_.end()) {
-                        hot_map_[key] = it->second;
+                        _payload_t payload = it->second;
+                        std::string input = std::to_string(key);
+                        hot_map_.upsert(input, [payload](_payload_t& val) { val = payload; }, payload);
+                        // hot_map_.upsert(input,payload);
                         // hotkey_file << std::fixed << key << " " << it->second << "\n";
                     }
                 }
                 
                 // hotkey_file.close();
                 
-                plin_server_block = false; // main block recovery
+                // plin_server_block = false; // main block recovery
                 prehot_cache = true;
                 transfer_complete = false;
                 message_str = "";
-                
                 std::cout << "Hot map updated with " << hot_map_.size() << " keys" << std::endl;
+
+
+                // std::ofstream hotkey_file("//home//ming//桌面//PLIN-N //PLIN-N//data//hot_key.csv", std::ios::app);
+                // hotkey_file << 'hot_key_count' << start_index << "\n";
+                // for (const auto& [key, payload] : hot_map_) {
+                //     hotkey_file << std::fixed << key << " " << payload << "\n";
+                // }
+                // hotkey_file.close();
+
             } else {
                 std::cerr << "Invalid devices message format: " << message_str << std::endl;
                 message_str = "";
             }
         }
+        start_index = end_index;
     }
 }
+

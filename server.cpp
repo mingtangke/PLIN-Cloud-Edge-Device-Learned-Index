@@ -803,10 +803,10 @@ void* handle_client(void *client_socket) {
     int spin_count = 0;
     auto end_time2 = std::chrono::high_resolution_clock::now();
     while (true) {
-        //block the plin_server during the prediction
-        while(test_index.db_logger.plin_server_block){
-            spin_count ++;
-        }
+        // //block the plin_server during the prediction
+        // while(test_index.db_logger.plin_server_block){
+        //     spin_count ++;
+        // }
 
 
         memset(buffer,0,MAX_MEM_BUFFER_SIZE);
@@ -828,10 +828,10 @@ void* handle_client(void *client_socket) {
             // auto end_time2 =end_time1; bug big bug
             end_time2 = end_time1;
         }
-        if((cache_hit_count + cache_miss_count) % 100000 == 0 &&  (cache_hit_count + cache_miss_count) != 0) {
-            double cache_hit_rate = 1.0 *cache_hit_count/(cache_hit_count + cache_miss_count);
-            std::cout<<"cache_hit_rate"<< cache_hit_rate<<std::endl;
-        }
+        // if((cache_hit_count + cache_miss_count) % 100000 == 0 &&  (cache_hit_count + cache_miss_count) != 0) {
+        //     double cache_hit_rate = 1.0 *cache_hit_count/(cache_hit_count + cache_miss_count);
+        //     std::cout<<"cache_hit_rate"<< cache_hit_rate<<std::endl;
+        // }
             // std::cout<<"cache_hit_rate"<< cache_hit_count/(cache_hit_count + cache_miss_count)<<std::endl;
             //  I am stupid 
 
@@ -865,12 +865,11 @@ void* handle_client(void *client_socket) {
            
             // bool debug = false;
             if(test_index.db_logger.prehot_cache ){
-                // std::unordered_map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
-                // std::map<_key_t,_payload_t> hot_map_ = test_index.db_logger.hot_map_;
-                // if(hot_map_.find(target_key) != hot_map_.end() &&
-                //     hot_map_[target_key] == payloads[log_record.target_pos]){
-                test_index.db_logger.cache_operate ++;
-                if( test_index.db_logger.hot_map_[target_key] == payloads[log_record.target_pos]){
+                test_index.db_logger.judge_retrain_all(log_record.device_id);  //for model retrain all
+                test_index.db_logger.cache_operate ++; // for model tuning and prediction
+
+                // if( test_index.db_logger.hot_map_[target_key] == payloads[log_record.target_pos]){
+                if(test_index.db_logger.hot_map_.find(std::to_string(target_key), answer) && answer == payloads[log_record.target_pos]){
                     test_index.db_logger.cache_hit ++;
                     response = "Success!";
                 }else{
