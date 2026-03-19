@@ -273,25 +273,4 @@ Check whether the hardcoded path in client.cpp test() has been changed to your l
 
 Build and run in WSL2/Ubuntu, or perform your own cross-platform networking refactor.
 
-### Q4: Query error rate fluctuates a lot
 
-Check:
-
-- Whether data distribution is consistent with training phase
-- Whether hot-key parameters (such as HOT_KEY_NUM) are too small
-- Whether log window and trigger thresholds (CACHE_RETRAIN_NUM) are properly tuned
-
----
-
-## 11. Known Limitations 🚧
-
-- The default workflow currently depends heavily on hardcoded paths.
-- CMake only builds server.cpp and client.cpp by default; utility programs are compiled manually.
-- Training/service communication port is fixed in source code (default 60001).
-- No fully integrated cross-platform adaptation or one-click script is provided yet.
-
----
-
-## 12. Reference 📚
-
-- The piecewise linear model implementation in piecewise_linear_model.h follows PGM-index ideas (source statement is in the file header).
