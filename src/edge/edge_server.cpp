@@ -18,7 +18,12 @@
 #include "serialize.h"
 #include "common/proto.h"
 #include "common/range_map.h"
+#include "common/rdma_snapshot.h"
 #include "common/rpc.h"
+#include "common/transport.h"
+#ifdef PLIN_ENABLE_RDMA
+#include "common/rdma_transport.h"
+#endif
 
 using _key_t     = double;
 using _payload_t = uint64_t;
@@ -32,8 +37,14 @@ struct Dataset {
 };
 
 struct EndConn {
-    int fd = -1;
+    std::shared_ptr<plin::transport::Transport> transport;
     std::shared_ptr<std::mutex> write_mu;
+};
+
+struct EdgeRdmaSnapshot {
+    std::vector<plin::rdma::LeafDescriptor> descs;
+    std::vector<plin::rdma::KeyPayloadRecord> records;
+    uint32_t version = plin::rdma::kSnapshotVersion;
 };
 
 struct EdgeRuntime {
@@ -42,6 +53,7 @@ struct EdgeRuntime {
     uint16_t cloud_port = 0;
     TestIndex* idx = nullptr;
     std::mutex* plin_mu = nullptr;
+    EdgeRdmaSnapshot* rdma_snapshot = nullptr;
     std::mutex ends_mu;
     std::unordered_map<int, EndConn> ends;
 };
@@ -109,23 +121,26 @@ static Dataset load_range(const std::string& path, _key_t lo, _key_t hi) {
     return d;
 }
 
-static bool write_locked(int fd, const plin::rpc::Frame& frame,
+static bool write_locked(plin::transport::Transport& transport,
+                         const plin::rpc::Frame& frame,
                          const std::shared_ptr<std::mutex>& mu) {
     std::lock_guard<std::mutex> lk(*mu);
-    return plin::rpc::write_frame(fd, frame);
+    return transport.write_frame(frame);
 }
 
-static void register_end(EdgeRuntime& rt, int end_id, int fd,
+static void register_end(EdgeRuntime& rt, int end_id,
+                         const std::shared_ptr<plin::transport::Transport>& transport,
                          const std::shared_ptr<std::mutex>& write_mu) {
     std::lock_guard<std::mutex> lk(rt.ends_mu);
-    rt.ends[end_id] = EndConn{fd, write_mu};
-    std::cout << "[edge] registered end " << end_id << "\n";
+    rt.ends[end_id] = EndConn{transport, write_mu};
+    std::cout << "[edge] registered end " << end_id
+              << " transport=" << transport->name() << "\n";
 }
 
-static void unregister_fd(EdgeRuntime& rt, int fd) {
+static void unregister_transport(EdgeRuntime& rt, const plin::transport::Transport* transport) {
     std::lock_guard<std::mutex> lk(rt.ends_mu);
     for (auto it = rt.ends.begin(); it != rt.ends.end();) {
-        if (it->second.fd == fd) it = rt.ends.erase(it);
+        if (it->second.transport.get() == transport) it = rt.ends.erase(it);
         else ++it;
     }
 }
@@ -138,7 +153,7 @@ static bool send_to_end(EdgeRuntime& rt, int end_id, const plin::rpc::Frame& fra
         if (it == rt.ends.end()) return false;
         conn = it->second;
     }
-    return write_locked(conn.fd, frame, conn.write_mu);
+    return write_locked(*conn.transport, frame, conn.write_mu);
 }
 
 static bool cloud_cross_fetch(EdgeRuntime& rt, const plin::rpc::Frame& req,
@@ -240,31 +255,116 @@ static plin::rpc::Frame make_param_push(TestIndex& idx) {
     return f;
 }
 
+static EdgeRdmaSnapshot build_rdma_snapshot(TestIndex& idx, const Dataset& ds) {
+    EdgeRdmaSnapshot snap;
+    const auto& table = idx.meta_table.local_table;
+    snap.descs.resize(table.size());
+    if (table.empty() || ds.keys.empty()) return snap;
+
+    for (size_t i = 0; i < table.size(); ++i) {
+        snap.descs[i].first_key = table[i].key;
+        snap.descs[i].version = snap.version;
+    }
+
+    std::vector<uint32_t> leaf_ids(ds.keys.size(), 0);
+    for (size_t i = 0; i < ds.keys.size(); ++i) {
+        int predicted = idx.meta_table.predict_pos(ds.keys[i]);
+        size_t leaf = predicted < 0 ? 0 : static_cast<size_t>(predicted);
+        if (leaf >= snap.descs.size()) leaf = snap.descs.size() - 1;
+        leaf_ids[i] = static_cast<uint32_t>(leaf);
+        ++snap.descs[leaf].count;
+    }
+
+    uint64_t offset = 0;
+    for (auto& desc : snap.descs) {
+        desc.offset = offset;
+        offset += desc.count;
+        desc.count = 0;  // reused as fill cursor below
+    }
+
+    snap.records.resize(ds.keys.size());
+    for (size_t i = 0; i < ds.keys.size(); ++i) {
+        auto& desc = snap.descs[leaf_ids[i]];
+        uint64_t pos = desc.offset + desc.count++;
+        snap.records[pos] = plin::rdma::KeyPayloadRecord{ds.keys[i], ds.payloads[i]};
+    }
+    return snap;
+}
+
+static plin::rpc::Frame make_rdma_snapshot_info(const plin::rdma::SnapshotInfo& info) {
+    plin::rpc::Frame f;
+    f.type = plin::proto::MsgType::RDMA_SNAPSHOT_INFO;
+    const auto* p = reinterpret_cast<const uint8_t*>(&info);
+    f.body.assign(p, p + sizeof(info));
+    return f;
+}
+
+static void send_rdma_snapshot_info_if_supported(plin::transport::Transport& transport,
+                                                 const std::shared_ptr<std::mutex>& write_mu,
+                                                 EdgeRuntime& rt) {
+    if (!transport.supports_remote_read() || !rt.rdma_snapshot) return;
+    if (rt.rdma_snapshot->descs.empty() || rt.rdma_snapshot->records.empty()) return;
+
+    plin::transport::RegisteredMemory desc_mem;
+    plin::transport::RegisteredMemory record_mem;
+    bool desc_ok = transport.register_memory(rt.rdma_snapshot->descs.data(),
+                                             rt.rdma_snapshot->descs.size() *
+                                             sizeof(plin::rdma::LeafDescriptor),
+                                             desc_mem);
+    bool record_ok = transport.register_memory(rt.rdma_snapshot->records.data(),
+                                               rt.rdma_snapshot->records.size() *
+                                               sizeof(plin::rdma::KeyPayloadRecord),
+                                               record_mem);
+    if (!desc_ok || !record_ok) {
+        std::cerr << "[edge] RDMA snapshot registration failed\n";
+        return;
+    }
+
+    plin::rdma::SnapshotInfo info;
+    info.version = rt.rdma_snapshot->version;
+    info.desc_addr = desc_mem.addr;
+    info.desc_rkey = desc_mem.rkey;
+    info.leaf_count = static_cast<uint32_t>(rt.rdma_snapshot->descs.size());
+    info.record_addr = record_mem.addr;
+    info.record_rkey = record_mem.rkey;
+    info.record_count = rt.rdma_snapshot->records.size();
+
+    auto frame = make_rdma_snapshot_info(info);
+    if (write_locked(transport, frame, write_mu)) {
+        std::cout << "[edge] RDMA_SNAPSHOT_INFO leaves=" << info.leaf_count
+                  << " records=" << info.record_count << "\n";
+    }
+}
+
 // ── per-End connection handler ────────────────────────────────────────────────
 
-static void handle_end(int fd, TestIndex& idx,
+static void handle_end(std::shared_ptr<plin::transport::Transport> transport,
+                        TestIndex& idx,
                         const plin::rpc::Frame& param_frame,
                         std::mutex& plin_mu,
                         EdgeRuntime& rt) {
     auto write_mu = std::make_shared<std::mutex>();
     // 1. Push current PLIN parameters
-    if (!write_locked(fd, param_frame, write_mu)) {
+    if (!write_locked(*transport, param_frame, write_mu)) {
         std::cerr << "[edge] PLIN_PARAM_PUSH write failed\n";
-        ::close(fd); return;
+        transport->close();
+        return;
     }
+    send_rdma_snapshot_info_if_supported(*transport, write_mu, rt);
 
     // 2. Serve EDGE_FETCH_REQ in a loop
     plin::rpc::Frame req;
-    while (plin::rpc::read_frame(fd, req)) {
+    while (transport->read_frame(req)) {
         if (req.type == plin::proto::MsgType::HEARTBEAT) {
             uint32_t end_id = 0;
             if (read_u32(req.body, 0, end_id)) {
-                register_end(rt, static_cast<int>(end_id), fd, write_mu);
+                register_end(rt, static_cast<int>(end_id), transport, write_mu);
             }
             continue;
         }
         if (req.type == plin::proto::MsgType::PLIN_PARAM_PUSH && req.body.empty()) {
-            if (!write_locked(fd, param_frame, write_mu)) break;
+            if (!write_locked(*transport, param_frame, write_mu)) break;
+            send_rdma_snapshot_info_if_supported(*transport, write_mu, rt);
             continue;
         }
         if (req.type == plin::proto::MsgType::CROSS_EDGE_REQ) {
@@ -272,7 +372,7 @@ static void handle_end(int fd, TestIndex& idx,
             if (!cloud_cross_fetch(rt, req, resp)) {
                 resp = make_fetch_resp(plin::proto::Status::ERROR);
             }
-            if (!write_locked(fd, resp, write_mu)) break;
+            if (!write_locked(*transport, resp, write_mu)) break;
             continue;
         }
         if (req.type != plin::proto::MsgType::EDGE_FETCH_REQ || req.body.size() < 8) {
@@ -318,10 +418,10 @@ static void handle_end(int fd, TestIndex& idx,
         resp.body.insert(resp.body.end(), pbytes, pbytes + 8);
         resp.body.push_back(0);  // param_stale_flag = false
 
-        if (!write_locked(fd, resp, write_mu)) break;
+        if (!write_locked(*transport, resp, write_mu)) break;
     }
-    unregister_fd(rt, fd);
-    ::close(fd);
+    unregister_transport(rt, transport.get());
+    transport->close();
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -333,20 +433,27 @@ int main(int argc, char** argv) {
     int edge_id = 0;
     std::string topology_path = "src/common/topology.yaml";
     std::string data_path     = "Data.txt";
+    plin::transport::Mode end_transport_mode = plin::transport::Mode::AUTO;
+    int rdma_port_offset = 1000;
 
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
         if      (k == "--id"       && i+1 < argc) edge_id       = std::stoi(argv[++i]);
         else if (k == "--topology" && i+1 < argc) topology_path = argv[++i];
         else if (k == "--data"     && i+1 < argc) data_path     = argv[++i];
+        else if (k == "--end-transport" && i+1 < argc) end_transport_mode = plin::transport::parse_mode(argv[++i]);
+        else if (k == "--rdma-port-offset" && i+1 < argc) rdma_port_offset = std::stoi(argv[++i]);
     }
     if (edge_id <= 0) {
-        std::cerr << "Usage: edge_server --id <1|2> [--topology <path>] [--data <path>]\n";
+        std::cerr << "Usage: edge_server --id <1|2> [--topology <path>] [--data <path>] "
+                     "[--end-transport tcp|rdma|auto] [--rdma-port-offset N]\n";
         return 1;
     }
 
     std::cout << "[edge_server] id=" << edge_id << " topo=" << topology_path
-              << " data=" << data_path << "\n";
+              << " data=" << data_path
+              << " end_transport=" << plin::transport::mode_name(end_transport_mode)
+              << " rdma_port_offset=" << rdma_port_offset << "\n";
 
     // Load topology
     plin::RangeMap rm;
@@ -392,6 +499,9 @@ int main(int argc, char** argv) {
     // Serialise params once (shared across all End connections)
     plin::rpc::Frame param_frame = make_param_push(idx);
     std::cout << "[edge_server] param_frame body=" << param_frame.body.size() << " bytes\n";
+    EdgeRdmaSnapshot rdma_snapshot = build_rdma_snapshot(idx, ds);
+    std::cout << "[edge_server] rdma_snapshot leaves=" << rdma_snapshot.descs.size()
+              << " records=" << rdma_snapshot.records.size() << "\n";
 
     std::mutex plin_mu;
     EdgeRuntime rt;
@@ -400,6 +510,7 @@ int main(int argc, char** argv) {
     rt.cloud_port = rm.cloud().port;
     rt.idx = &idx;
     rt.plin_mu = &plin_mu;
+    rt.rdma_snapshot = &rdma_snapshot;
 
     int cloud_fd = connect_cloud_control(rt);
     if (cloud_fd >= 0) {
@@ -410,26 +521,59 @@ int main(int argc, char** argv) {
         std::cerr << "[edge] cloud unavailable; stage-④ disabled\n";
     }
 
-    // Listen for Ends
-    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-    ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(my_edge->port);
-    if (::bind(listen_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("[edge] bind"); return 1;
+    auto launch_handler = [&idx, &param_frame, &plin_mu, &rt](
+                              std::shared_ptr<plin::transport::Transport> transport) {
+        std::thread([transport, &idx, &param_frame, &plin_mu, &rt]() mutable {
+            handle_end(transport, idx, param_frame, plin_mu, rt);
+        }).detach();
+    };
+
+    if (end_transport_mode != plin::transport::Mode::TCP) {
+#ifdef PLIN_ENABLE_RDMA
+        std::string err;
+        uint16_t rdma_port = plin::transport::rdma_port_for(my_edge->port, rdma_port_offset);
+        auto rdma_listener = plin::transport::listen_rdma(rdma_port, 16, &err);
+        if (rdma_listener) {
+            std::cout << "[edge_server] RDMA listening on port " << rdma_port << "...\n";
+            std::thread([listener = std::move(rdma_listener), launch_handler]() mutable {
+                while (true) {
+                    std::string accept_err;
+                    auto t = listener->accept(&accept_err);
+                    if (!t) {
+                        std::cerr << "[edge] RDMA accept failed: " << accept_err << "\n";
+                        continue;
+                    }
+                    launch_handler(std::shared_ptr<plin::transport::Transport>(std::move(t)));
+                }
+            }).detach();
+        } else {
+            std::cerr << "[edge] RDMA listen disabled: " << err << "\n";
+            if (end_transport_mode == plin::transport::Mode::RDMA) return 1;
+        }
+#else
+        if (end_transport_mode == plin::transport::Mode::RDMA) {
+            std::cerr << "[edge] RDMA requested but PLIN_ENABLE_RDMA=OFF\n";
+            return 1;
+        }
+        std::cout << "[edge] RDMA unavailable in this build; using TCP fallback\n";
+#endif
     }
-    ::listen(listen_fd, 16);
-    std::cout << "[edge_server] listening on port " << my_edge->port << "...\n";
+
+    if (end_transport_mode == plin::transport::Mode::RDMA) {
+        while (true) std::this_thread::sleep_for(std::chrono::hours(24));
+    }
+
+    int listen_fd = plin::transport::listen_tcp(my_edge->port, 16);
+    if (listen_fd < 0) {
+        perror("[edge] tcp listen");
+        return 1;
+    }
+    std::cout << "[edge_server] TCP listening on port " << my_edge->port << "...\n";
 
     while (true) {
-        int cli = ::accept(listen_fd, nullptr, nullptr);
-        if (cli < 0) { perror("[edge] accept"); continue; }
-        std::thread([cli, &idx, &param_frame, &plin_mu, &rt]() mutable {
-            handle_end(cli, idx, param_frame, plin_mu, rt);
-        }).detach();
+        auto t = plin::transport::accept_tcp(listen_fd);
+        if (!t) { perror("[edge] tcp accept"); continue; }
+        launch_handler(std::shared_ptr<plin::transport::Transport>(std::move(t)));
     }
     return 0;
 }

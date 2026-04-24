@@ -12,6 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+option(PLIN_ENABLE_RDMA "Enable optional RDMA transport for End-Edge queries" OFF)
 
 # --- third_party -----------------------------------------------------------
 # libcuckoo: header-only, kept at repo root
@@ -49,6 +50,21 @@ else()
     set(PLIN_HAVE_TORCH OFF)
     message(WARNING "libtorch NOT found. Cloud/End LSTM runners will be stubbed. "
                     "Run scripts/fetch_libtorch.sh or install PyTorch to enable.")
+endif()
+
+if(PLIN_ENABLE_RDMA)
+    find_path(PLIN_IBVERBS_INCLUDE_DIR infiniband/verbs.h)
+    find_library(PLIN_IBVERBS_LIBRARY ibverbs)
+    find_path(PLIN_RDMACM_INCLUDE_DIR rdma/rdma_cma.h)
+    find_library(PLIN_RDMACM_LIBRARY rdmacm)
+    if(NOT PLIN_IBVERBS_INCLUDE_DIR OR NOT PLIN_IBVERBS_LIBRARY OR
+       NOT PLIN_RDMACM_INCLUDE_DIR OR NOT PLIN_RDMACM_LIBRARY)
+        message(FATAL_ERROR "PLIN_ENABLE_RDMA=ON requires libibverbs-dev and librdmacm-dev")
+    endif()
+    set(PLIN_HAVE_RDMA ON)
+    message(STATUS "RDMA enabled: ${PLIN_IBVERBS_LIBRARY}; ${PLIN_RDMACM_LIBRARY}")
+else()
+    set(PLIN_HAVE_RDMA OFF)
 endif()
 
 # --- project layers --------------------------------------------------------

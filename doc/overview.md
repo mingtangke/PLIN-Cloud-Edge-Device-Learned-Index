@@ -14,4 +14,4 @@
 5.Edge Layer的本地自适应索引就是plin
 6.热键数组一直是在端上呀，咱们整体是三层架构，云-边-端，只不过我们目前的架构先做其中的边-端，我们的任务是扩展到下面的云边端，是非常激烈的改革
 
-![alt text](image.png)
+![PLIN Cloud-Edge-Device system overview](../figure/overview.png)

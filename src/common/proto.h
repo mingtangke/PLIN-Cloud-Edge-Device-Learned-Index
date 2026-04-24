@@ -14,6 +14,7 @@ enum class MsgType : uint8_t {
     CROSS_EDGE_REQ   = 8,
     HEARTBEAT        = 9,
     HEARTBEAT_ACK    = 10,
+    RDMA_SNAPSHOT_INFO = 11,
 };
 
 enum class Status : uint8_t {

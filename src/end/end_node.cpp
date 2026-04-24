@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <sstream>
@@ -23,7 +24,9 @@
 
 #include "common/proto.h"
 #include "common/range_map.h"
+#include "common/rdma_snapshot.h"
 #include "common/rpc.h"
+#include "common/transport.h"
 #include "hot_cache.h"
 #include "parent_plin_cache.h"
 
@@ -31,9 +34,11 @@ using _key_t     = double;
 using _payload_t = uint64_t;
 
 void end_lstm_runner_init(const std::string& model_path);
+struct EndRdmaSnapshot;
 static void apply_edge_control_frame(const plin::rpc::Frame& f,
                                      plin::end::ParentPlinCache& ppc,
-                                     plin::end::HotCache& hc);
+                                     plin::end::HotCache& hc,
+                                     EndRdmaSnapshot* rdma_snapshot = nullptr);
 
 static void append_u32(std::vector<uint8_t>& b, uint32_t v) {
     uint8_t raw[4];
@@ -89,31 +94,28 @@ static std::string default_model_path_for(int end_id) {
     return "hot_lstm/models/end_lstm.pt";
 }
 
-// ── edge RPC helpers ──────────────────────────────────────────────────────────
+// ── edge transport helpers ───────────────────────────────────────────────────
 
-// Connect to edge at host:port. Returns socket fd, or -1 on failure.
-static int connect_edge(const std::string& host, uint16_t port) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons(port);
-    ::inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
-    if (::connect(fd, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("[end_node] connect to edge");
-        ::close(fd);
-        return -1;
-    }
-    return fd;
-}
+struct EndRdmaSnapshot {
+    plin::rdma::SnapshotInfo info;
+    bool loaded = false;
+};
+
+enum class RDMALookupStatus {
+    HIT,
+    MISS,
+    UNAVAILABLE,
+};
 
 // Send EDGE_FETCH_REQ, receive EDGE_FETCH_RESP.
 // Returns true on success; payload written to out.
-static bool read_fetch_response(int edge_fd,
+static bool read_fetch_response(plin::transport::Transport& edge,
                                 plin::end::ParentPlinCache& ppc,
                                 plin::end::HotCache& hc,
+                                EndRdmaSnapshot& rdma_snapshot,
                                 _payload_t& out, bool& param_stale) {
     plin::rpc::Frame resp;
-    while (plin::rpc::read_frame(edge_fd, resp)) {
+    while (edge.read_frame(resp)) {
         if (resp.type == plin::proto::MsgType::EDGE_FETCH_RESP) {
             if (resp.body.size() < 9) return false;
             auto status = static_cast<plin::proto::Status>(resp.body[0]);
@@ -122,8 +124,9 @@ static bool read_fetch_response(int edge_fd,
             return status == plin::proto::Status::OK;
         }
         if (resp.type == plin::proto::MsgType::PLIN_PARAM_PUSH ||
-            resp.type == plin::proto::MsgType::HOT_UPDATE) {
-            apply_edge_control_frame(resp, ppc, hc);
+            resp.type == plin::proto::MsgType::HOT_UPDATE ||
+            resp.type == plin::proto::MsgType::RDMA_SNAPSHOT_INFO) {
+            apply_edge_control_frame(resp, ppc, hc, &rdma_snapshot);
             continue;
         }
         std::cerr << "[end_node] unexpected frame while waiting fetch resp type="
@@ -133,9 +136,55 @@ static bool read_fetch_response(int edge_fd,
     return false;
 }
 
-static bool edge_fetch(int edge_fd, std::mutex& edge_mu,
+static RDMALookupStatus rdma_snapshot_lookup(plin::transport::Transport& edge,
+                                             const EndRdmaSnapshot& snapshot,
+                                             _key_t key, int predicted_slot,
+                                             _payload_t& out) {
+    if (!snapshot.loaded || !edge.supports_remote_read()) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+    if (snapshot.info.magic != plin::rdma::kSnapshotMagic ||
+        snapshot.info.leaf_count == 0 ||
+        predicted_slot < 0) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+
+    uint32_t leaf_id = static_cast<uint32_t>(predicted_slot);
+    if (leaf_id >= snapshot.info.leaf_count) leaf_id = snapshot.info.leaf_count - 1;
+
+    plin::rdma::LeafDescriptor desc;
+    uint64_t desc_addr = snapshot.info.desc_addr
+                       + static_cast<uint64_t>(leaf_id) * sizeof(desc);
+    if (!edge.read_remote(desc_addr, snapshot.info.desc_rkey, &desc, sizeof(desc))) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+    if (desc.version != snapshot.info.version || desc.count == 0) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+    if (desc.offset + desc.count > snapshot.info.record_count) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+
+    std::vector<plin::rdma::KeyPayloadRecord> records(desc.count);
+    uint64_t record_addr = snapshot.info.record_addr
+                         + desc.offset * sizeof(plin::rdma::KeyPayloadRecord);
+    size_t bytes = records.size() * sizeof(plin::rdma::KeyPayloadRecord);
+    if (!edge.read_remote(record_addr, snapshot.info.record_rkey, records.data(), bytes)) {
+        return RDMALookupStatus::UNAVAILABLE;
+    }
+    for (const auto& rec : records) {
+        if (rec.key == key) {
+            out = rec.payload;
+            return RDMALookupStatus::HIT;
+        }
+    }
+    return RDMALookupStatus::MISS;
+}
+
+static bool edge_fetch(plin::transport::Transport& edge, std::mutex& edge_mu,
                        plin::end::ParentPlinCache& ppc,
                        plin::end::HotCache& hc,
+                       EndRdmaSnapshot& rdma_snapshot,
                        _key_t key, int predicted_slot,
                        _payload_t& out, bool& param_stale) {
     plin::rpc::Frame req;
@@ -148,14 +197,15 @@ static bool edge_fetch(int edge_fd, std::mutex& edge_mu,
     req.body.insert(req.body.end(), sbuf, sbuf + 4);
 
     std::lock_guard<std::mutex> lk(edge_mu);
-    if (!plin::rpc::write_frame(edge_fd, req)) return false;
+    if (!edge.write_frame(req)) return false;
 
-    return read_fetch_response(edge_fd, ppc, hc, out, param_stale);
+    return read_fetch_response(edge, ppc, hc, rdma_snapshot, out, param_stale);
 }
 
-static bool cross_edge_fetch(int edge_fd, std::mutex& edge_mu,
+static bool cross_edge_fetch(plin::transport::Transport& edge, std::mutex& edge_mu,
                              plin::end::ParentPlinCache& ppc,
                              plin::end::HotCache& hc,
+                             EndRdmaSnapshot& rdma_snapshot,
                              _key_t key, _payload_t& out) {
     static std::atomic<uint64_t> next_request_id{1};
 
@@ -167,18 +217,18 @@ static bool cross_edge_fetch(int edge_fd, std::mutex& edge_mu,
     req.body.insert(req.body.end(), kbuf, kbuf + 8);
 
     std::lock_guard<std::mutex> lk(edge_mu);
-    if (!plin::rpc::write_frame(edge_fd, req)) return false;
+    if (!edge.write_frame(req)) return false;
 
     bool stale = false;
-    return read_fetch_response(edge_fd, ppc, hc, out, stale);
+    return read_fetch_response(edge, ppc, hc, rdma_snapshot, out, stale);
 }
 
-static bool send_end_heartbeat(int edge_fd, std::mutex& edge_mu, int end_id) {
+static bool send_end_heartbeat(plin::transport::Transport& edge, std::mutex& edge_mu, int end_id) {
     plin::rpc::Frame hb;
     hb.type = plin::proto::MsgType::HEARTBEAT;
     append_u32(hb.body, static_cast<uint32_t>(end_id));
     std::lock_guard<std::mutex> lk(edge_mu);
-    return plin::rpc::write_frame(edge_fd, hb);
+    return edge.write_frame(hb);
 }
 
 // ── 4-stage lookup ────────────────────────────────────────────────────────────
@@ -204,15 +254,17 @@ struct Stats {
     }
 };
 
-static bool request_param_push(int edge_fd, std::mutex& edge_mu,
+static bool request_param_push(plin::transport::Transport& edge, std::mutex& edge_mu,
                                plin::end::ParentPlinCache& ppc,
-                               plin::end::HotCache& hc);
+                               plin::end::HotCache& hc,
+                               EndRdmaSnapshot& rdma_snapshot);
 
 class EndNode {
  public:
     EndNode(int id, const plin::RangeMap& rm,
-            LocalStore&& store, int edge_fd)
-        : id_(id), rm_(rm), store_(std::move(store)), edge_fd_(edge_fd) {}
+            LocalStore&& store,
+            std::shared_ptr<plin::transport::Transport> edge)
+        : id_(id), rm_(rm), store_(std::move(store)), edge_(std::move(edge)) {}
 
     LookupResult lookup(_key_t k) {
         LookupResult r;
@@ -240,16 +292,21 @@ class EndNode {
         // Stage ③: same-edge sibling → EDGE_FETCH_REQ via parent Edge
         int tgt_end = rm_.locate_end(k);
         if (tgt_end >= 0 && rm_.same_edge(tgt_end, id_)) {
-            if (edge_fd_ >= 0) {
+            if (edge_) {
                 int slot = plin_cache_.predict_pos(k);
+                auto rdma_status = rdma_snapshot_lookup(*edge_, rdma_snapshot_, k, slot, v);
                 bool stale = false;
-                bool ok = edge_fetch(edge_fd_, edge_mu_, plin_cache_, hot_cache_, k, slot, v, stale);
+                bool ok = rdma_status == RDMALookupStatus::HIT;
+                if (rdma_status != RDMALookupStatus::HIT) {
+                    ok = edge_fetch(*edge_, edge_mu_, plin_cache_, hot_cache_,
+                                    rdma_snapshot_, k, slot, v, stale);
+                }
                 r.found = ok;
                 r.payload = v;
                 r.stage = LookupStage::EDGE_PLIN;
                 if (ok) hot_cache_.upsert(k, v);  // warm hot cache
                 if (stale) {
-                    request_param_push(edge_fd_, edge_mu_, plin_cache_, hot_cache_);
+                    request_param_push(*edge_, edge_mu_, plin_cache_, hot_cache_, rdma_snapshot_);
                 }
             }
             ++stats_.hit_edge;
@@ -257,8 +314,9 @@ class EndNode {
         }
 
         // Stage ④: cross-edge via parent Edge and Cloud.
-        if (tgt_end >= 0 && edge_fd_ >= 0) {
-            bool ok = cross_edge_fetch(edge_fd_, edge_mu_, plin_cache_, hot_cache_, k, v);
+        if (tgt_end >= 0 && edge_) {
+            bool ok = cross_edge_fetch(*edge_, edge_mu_, plin_cache_, hot_cache_,
+                                       rdma_snapshot_, k, v);
             r.found = ok;
             r.payload = v;
             r.stage = LookupStage::CROSS_EDGE;
@@ -275,18 +333,21 @@ class EndNode {
     plin::end::ParentPlinCache& plin_cache() { return plin_cache_; }
     const Stats& stats() const { return stats_; }
     bool register_with_edge() {
-        if (edge_fd_ < 0) return false;
-        return send_end_heartbeat(edge_fd_, edge_mu_, id_);
+        if (!edge_) return false;
+        return send_end_heartbeat(*edge_, edge_mu_, id_);
     }
+    EndRdmaSnapshot& rdma_snapshot() { return rdma_snapshot_; }
+    std::shared_ptr<plin::transport::Transport> edge_transport() { return edge_; }
 
  private:
     int id_;
     const plin::RangeMap& rm_;
     LocalStore store_;
-    int        edge_fd_;
+    std::shared_ptr<plin::transport::Transport> edge_;
     std::mutex edge_mu_;
     plin::end::HotCache        hot_cache_;
     plin::end::ParentPlinCache plin_cache_;
+    EndRdmaSnapshot rdma_snapshot_;
     Stats stats_{};
 };
 
@@ -294,7 +355,8 @@ class EndNode {
 
 static void apply_edge_control_frame(const plin::rpc::Frame& f,
                                      plin::end::ParentPlinCache& ppc,
-                                     plin::end::HotCache& hc) {
+                                     plin::end::HotCache& hc,
+                                     EndRdmaSnapshot* rdma_snapshot) {
     if (f.type == plin::proto::MsgType::PLIN_PARAM_PUSH) {
         ppc.load_from_push(f.body.data(), f.body.size());
         std::cout << "[end_node] received PLIN_PARAM_PUSH "
@@ -313,91 +375,85 @@ static void apply_edge_control_frame(const plin::rpc::Frame& f,
         hc.batch_upsert(kv);
         std::cout << "[end_node] HOT_UPDATE " << n
                   << " keys hot_cache_size=" << hc.size() << "\n";
+    } else if (f.type == plin::proto::MsgType::RDMA_SNAPSHOT_INFO) {
+        if (!rdma_snapshot || f.body.size() != sizeof(plin::rdma::SnapshotInfo)) return;
+        std::memcpy(&rdma_snapshot->info, f.body.data(), sizeof(plin::rdma::SnapshotInfo));
+        rdma_snapshot->loaded =
+            rdma_snapshot->info.magic == plin::rdma::kSnapshotMagic &&
+            rdma_snapshot->info.leaf_count > 0 &&
+            rdma_snapshot->info.record_count > 0;
+        std::cout << "[end_node] RDMA_SNAPSHOT_INFO loaded=" << rdma_snapshot->loaded
+                  << " leaves=" << rdma_snapshot->info.leaf_count
+                  << " records=" << rdma_snapshot->info.record_count << "\n";
     }
 }
 
-static bool request_param_push(int edge_fd, std::mutex& edge_mu,
+static bool request_param_push(plin::transport::Transport& edge, std::mutex& edge_mu,
                                plin::end::ParentPlinCache& ppc,
-                               plin::end::HotCache& hc) {
+                               plin::end::HotCache& hc,
+                               EndRdmaSnapshot& rdma_snapshot) {
     plin::rpc::Frame req;
     req.type = plin::proto::MsgType::PLIN_PARAM_PUSH;
 
     std::lock_guard<std::mutex> lk(edge_mu);
-    if (!plin::rpc::write_frame(edge_fd, req)) return false;
+    if (!edge.write_frame(req)) return false;
 
     plin::rpc::Frame resp;
-    if (!plin::rpc::read_frame(edge_fd, resp)) return false;
+    if (!edge.read_frame(resp)) return false;
     if (resp.type != plin::proto::MsgType::PLIN_PARAM_PUSH) return false;
-    apply_edge_control_frame(resp, ppc, hc);
+    apply_edge_control_frame(resp, ppc, hc, &rdma_snapshot);
+    if (edge.read_frame(resp, 50)) {
+        apply_edge_control_frame(resp, ppc, hc, &rdma_snapshot);
+    }
     return true;
 }
 
-static bool wait_initial_plin_push(int fd,
+static bool wait_initial_plin_push(plin::transport::Transport& edge,
                                    plin::end::ParentPlinCache& ppc,
                                    plin::end::HotCache& hc,
+                                   EndRdmaSnapshot& rdma_snapshot,
                                    int timeout_ms) {
     auto deadline = std::chrono::steady_clock::now()
                   + std::chrono::milliseconds(timeout_ms);
     while (!ppc.loaded() && std::chrono::steady_clock::now() < deadline) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-
-        timeval tv{};
-        tv.tv_sec = 0;
-        tv.tv_usec = 100 * 1000;
-        int rc = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
-        if (rc < 0) {
-            if (errno == EINTR) continue;
-            perror("[end_node] select");
-            return false;
-        }
-        if (rc == 0) continue;
-
         plin::rpc::Frame f;
-        if (!plin::rpc::read_frame(fd, f)) return false;
-        apply_edge_control_frame(f, ppc, hc);
+        if (!edge.read_frame(f, 100)) continue;
+        apply_edge_control_frame(f, ppc, hc, &rdma_snapshot);
+    }
+    plin::rpc::Frame f;
+    while (edge.read_frame(f, 25)) {
+        apply_edge_control_frame(f, ppc, hc, &rdma_snapshot);
+        if (f.type != plin::proto::MsgType::RDMA_SNAPSHOT_INFO) break;
     }
     return ppc.loaded();
 }
 
-static void edge_receiver(int fd, plin::end::ParentPlinCache& ppc,
-                          plin::end::HotCache& hc) {
+static void edge_receiver(plin::transport::Transport& edge,
+                          plin::end::ParentPlinCache& ppc,
+                          plin::end::HotCache& hc,
+                          EndRdmaSnapshot& rdma_snapshot) {
     plin::rpc::Frame f;
-    while (plin::rpc::read_frame(fd, f)) {
-        apply_edge_control_frame(f, ppc, hc);
+    while (edge.read_frame(f)) {
+        apply_edge_control_frame(f, ppc, hc, &rdma_snapshot);
         // EDGE_FETCH_RESP is handled inline in edge_fetch(). This receiver only
         // starts after the M4/M5 self-test, so it cannot consume that response.
     }
 }
 
-static void drain_edge_control_frames(int fd,
+static void drain_edge_control_frames(plin::transport::Transport& edge,
                                       plin::end::ParentPlinCache& ppc,
                                       plin::end::HotCache& hc,
+                                      EndRdmaSnapshot& rdma_snapshot,
                                       int timeout_ms) {
     auto deadline = std::chrono::steady_clock::now()
                   + std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-
-        timeval tv{};
-        tv.tv_sec = 0;
-        tv.tv_usec = 100 * 1000;
-        int rc = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
-        if (rc < 0) {
-            if (errno == EINTR) continue;
-            perror("[end_node] select");
-            return;
-        }
-        if (rc == 0) continue;
-
         plin::rpc::Frame f;
-        if (!plin::rpc::read_frame(fd, f)) return;
+        if (!edge.read_frame(f, 100)) continue;
         if (f.type == plin::proto::MsgType::PLIN_PARAM_PUSH ||
-            f.type == plin::proto::MsgType::HOT_UPDATE) {
-            apply_edge_control_frame(f, ppc, hc);
+            f.type == plin::proto::MsgType::HOT_UPDATE ||
+            f.type == plin::proto::MsgType::RDMA_SNAPSHOT_INFO) {
+            apply_edge_control_frame(f, ppc, hc, &rdma_snapshot);
         } else {
             std::cerr << "[end_node] ignored frame while draining type="
                       << static_cast<int>(f.type) << "\n";
@@ -597,6 +653,8 @@ int main(int argc, char** argv) {
     std::string bench_workload_path;
     size_t bench_queries = 0;
     int bench_wait_ms = 0;
+    plin::transport::Mode edge_transport_mode = plin::transport::Mode::AUTO;
+    int rdma_port_offset = 1000;
 
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
@@ -607,11 +665,14 @@ int main(int argc, char** argv) {
         else if (k == "--bench-workload" && i+1 < argc) bench_workload_path = argv[++i];
         else if (k == "--bench-queries"  && i+1 < argc) bench_queries = std::stoull(argv[++i]);
         else if (k == "--bench-wait-ms"  && i+1 < argc) bench_wait_ms = std::stoi(argv[++i]);
+        else if (k == "--edge-transport" && i+1 < argc) edge_transport_mode = plin::transport::parse_mode(argv[++i]);
+        else if (k == "--rdma-port-offset" && i+1 < argc) rdma_port_offset = std::stoi(argv[++i]);
     }
     if (end_id <= 0) {
         std::cerr << "Usage: end_node --id <1-10> [--topology <path>] "
                      "[--data <path>] [--model <path>] "
-                     "[--bench-workload <csv> --bench-queries <N>]\n";
+                     "[--bench-workload <csv> --bench-queries <N>] "
+                     "[--edge-transport tcp|rdma|auto] [--rdma-port-offset N]\n";
         return 1;
     }
     if (model_path.empty()) {
@@ -619,7 +680,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[end_node] id=" << end_id << " topo=" << topology_path
-              << " data=" << data_path << " model=" << model_path << "\n";
+              << " data=" << data_path << " model=" << model_path
+              << " edge_transport=" << plin::transport::mode_name(edge_transport_mode)
+              << " rdma_port_offset=" << rdma_port_offset << "\n";
 
     // Topology
     plin::RangeMap rm;
@@ -661,26 +724,33 @@ int main(int argc, char** argv) {
     end_lstm_runner_init(model_path);
 
     // Connect to parent Edge (retry up to 10s)
-    int edge_fd = -1;
-    for (int attempt = 0; attempt < 20 && edge_fd < 0; ++attempt) {
-        edge_fd = connect_edge(my_edge_info->host, my_edge_info->port);
-        if (edge_fd < 0) {
+    std::shared_ptr<plin::transport::Transport> edge_transport;
+    for (int attempt = 0; attempt < 20 && !edge_transport; ++attempt) {
+        std::string err;
+        auto t = plin::transport::connect_transport(my_edge_info->host, my_edge_info->port,
+                                                    edge_transport_mode, rdma_port_offset, &err);
+        if (t) {
+            edge_transport = std::shared_ptr<plin::transport::Transport>(std::move(t));
+        } else {
+            if (!err.empty()) std::cerr << "[end_node] edge connect failed: " << err << "\n";
             std::cout << "[end_node] waiting for edge (attempt " << attempt+1 << ")...\n";
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
     }
-    if (edge_fd < 0) {
+    if (!edge_transport) {
         std::cerr << "[end_node] could not connect to edge; running without stage-③\n";
     } else {
-        std::cout << "[end_node] connected to edge\n";
+        std::cout << "[end_node] connected to edge transport="
+                  << edge_transport->name() << "\n";
     }
 
     // Build EndNode
-    EndNode node(end_id, rm, std::move(store), edge_fd);
+    EndNode node(end_id, rm, std::move(store), edge_transport);
 
     // Wait for PLIN params (up to 5s)
-    if (edge_fd >= 0) {
-        wait_initial_plin_push(edge_fd, node.plin_cache(), node.hot_cache(), 5000);
+    if (edge_transport) {
+        wait_initial_plin_push(*edge_transport, node.plin_cache(), node.hot_cache(),
+                               node.rdma_snapshot(), 5000);
         std::cout << "[end_node] plin_cache loaded=" << node.plin_cache().loaded() << "\n";
         if (node.register_with_edge()) {
             std::cout << "[end_node] registered with edge\n";
@@ -694,23 +764,24 @@ int main(int argc, char** argv) {
     if (!bench_workload_path.empty()) {
         if (bench_queries == 0) {
             std::cerr << "[bench] --bench-queries must be > 0\n";
-            if (edge_fd >= 0) ::close(edge_fd);
+            if (edge_transport) edge_transport->close();
             return 2;
         }
-        if (edge_fd >= 0 && bench_wait_ms > 0) {
+        if (edge_transport && bench_wait_ms > 0) {
             std::cout << "[bench] draining edge control frames for "
                       << bench_wait_ms << "ms\n";
-            drain_edge_control_frames(edge_fd, node.plin_cache(), node.hot_cache(), bench_wait_ms);
+            drain_edge_control_frames(*edge_transport, node.plin_cache(), node.hot_cache(),
+                                      node.rdma_snapshot(), bench_wait_ms);
         }
         std::vector<_key_t> bench_keys =
             load_benchmark_keys(bench_workload_path, data_path, bench_queries);
         if (bench_keys.empty()) {
             std::cerr << "[bench] no benchmark keys loaded\n";
-            if (edge_fd >= 0) ::close(edge_fd);
+            if (edge_transport) edge_transport->close();
             return 2;
         }
         run_benchmark(node, bench_keys, end_id);
-        if (edge_fd >= 0) ::close(edge_fd);
+        if (edge_transport) edge_transport->close();
         return 0;
     }
 
@@ -718,14 +789,15 @@ int main(int argc, char** argv) {
 
     // Start background receiver for future PLIN_PARAM_PUSH / HOT_UPDATE frames.
     std::thread recv_thread;
-    if (edge_fd >= 0) {
-        recv_thread = std::thread([edge_fd, &node]() {
-            edge_receiver(edge_fd, node.plin_cache(), node.hot_cache());
+    if (edge_transport) {
+        recv_thread = std::thread([edge_transport, &node]() {
+            edge_receiver(*edge_transport, node.plin_cache(), node.hot_cache(),
+                          node.rdma_snapshot());
         });
     }
 
     // Keep alive until recv_thread finishes (edge disconnects) or user kills
     if (recv_thread.joinable()) recv_thread.join();
-    if (edge_fd >= 0) ::close(edge_fd);
+    if (edge_transport) edge_transport->close();
     return 0;
 }

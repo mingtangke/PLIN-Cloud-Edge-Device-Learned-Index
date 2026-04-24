@@ -17,8 +17,19 @@ if [ ! -f "$WLOG" ] && [ -f "$PROJ/../PLIN-Cloud-Edge-Device-Learned-Index_odd/d
     WLOG="$PROJ/../PLIN-Cloud-Edge-Device-Learned-Index_odd/data/workload_log.csv"
 fi
 OUT="$PROJ/output"
-BUILD="$PROJ/build"
+BUILD="${PLIN_BUILD_DIR:-build}"
+if [[ "$BUILD" != /* ]]; then
+    BUILD="$PROJ/$BUILD"
+fi
+EDGE_TRANSPORT="${PLIN_EDGE_TRANSPORT:-auto}"
+END_TRANSPORT="${PLIN_END_TRANSPORT:-$EDGE_TRANSPORT}"
+RDMA_PORT_OFFSET="${PLIN_RDMA_PORT_OFFSET:-1000}"
+EDGE_EXTRA_ARGS=()
 END_EXTRA_ARGS=()
+if [ -n "${PLIN_EDGE_EXTRA_ARGS:-}" ]; then
+    # shellcheck disable=SC2206
+    EDGE_EXTRA_ARGS=(${PLIN_EDGE_EXTRA_ARGS})
+fi
 if [ -n "${PLIN_END_EXTRA_ARGS:-}" ]; then
     # shellcheck disable=SC2206
     END_EXTRA_ARGS=(${PLIN_END_EXTRA_ARGS})
@@ -51,6 +62,8 @@ echo "=== Starting edge servers ==="
 for EDGE_ID in 1 2; do
     nohup "$BUILD/edge/edge_server" \
         --id "$EDGE_ID" --topology "$TOPO" --data "$DATA" \
+        --end-transport "$EDGE_TRANSPORT" --rdma-port-offset "$RDMA_PORT_OFFSET" \
+        "${EDGE_EXTRA_ARGS[@]}" \
         > "$OUT/edge_${EDGE_ID}.log" 2>&1 &
     echo "[run_all] edge $EDGE_ID pid=$! log=output/edge_${EDGE_ID}.log"
 done
@@ -74,6 +87,7 @@ for END_ID in $(seq 1 10); do
     [ -f "$MODEL" ] || MODEL="$PROJ/hot_lstm/models/end_lstm.pt"
     nohup "$BUILD/end/end_node" \
         --id "$END_ID" --topology "$TOPO" --data "$DATA" --model "$MODEL" \
+        --edge-transport "$END_TRANSPORT" --rdma-port-offset "$RDMA_PORT_OFFSET" \
         "${END_EXTRA_ARGS[@]}" \
         > "$OUT/end_${END_ID}.log" 2>&1 &
     echo "[run_all] end $END_ID pid=$! log=output/end_${END_ID}.log"

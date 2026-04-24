@@ -8,6 +8,9 @@
 #   PLIN_BENCH_WAIT_MS=12000     # let Ends drain HOT_UPDATE before replay
 #   PLIN_BENCH_TIMEOUT_SEC=900   # wait for all End benchmark lines
 #   PLIN_BENCH_SKIP_BUILD=1      # skip cmake build step
+#   PLIN_EDGE_TRANSPORT=auto     # tcp|rdma|auto for End-Edge transport
+#   PLIN_BUILD_DIR=build-rdma    # use RDMA-enabled build directory
+#   PLIN_ENABLE_RDMA=1           # configure the build directory with RDMA support
 # set -euo pipefail
 
 PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +24,12 @@ MD="$OUT/benchmark_3layer.md"
 WAIT_MS="${PLIN_BENCH_WAIT_MS:-12000}"
 TIMEOUT_SEC="${PLIN_BENCH_TIMEOUT_SEC:-1000}"
 PYTHON_BIN="${PYTHON:-python3}"
+EDGE_TRANSPORT="${PLIN_EDGE_TRANSPORT:-auto}"
+END_TRANSPORT="${PLIN_END_TRANSPORT:-$EDGE_TRANSPORT}"
+BUILD_DIR="${PLIN_BUILD_DIR:-build}"
+if [[ "$BUILD_DIR" != /* ]]; then
+    BUILD_DIR="$PROJ/$BUILD_DIR"
+fi
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ -x /root/miniconda3/bin/python3 ]; then
     PYTHON_BIN="/root/miniconda3/bin/python3"
 fi
@@ -51,16 +60,22 @@ if [ ! -f "$TOPO" ]; then
 fi
 
 if [ "${PLIN_BENCH_SKIP_BUILD:-0}" != "1" ]; then
-    cmake -B "$PROJ/build" -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$PROJ/build" -j "$(nproc)"
+    CMAKE_ARGS=(-DCMAKE_BUILD_TYPE=Release)
+    if [ "${PLIN_ENABLE_RDMA:-0}" = "1" ]; then
+        CMAKE_ARGS+=(-DPLIN_ENABLE_RDMA=ON)
+    fi
+    cmake -B "$BUILD_DIR" "${CMAKE_ARGS[@]}"
+    cmake --build "$BUILD_DIR" -j "$(nproc)"
 fi
 
 echo "[bench] data=$DATA"
 echo "[bench] workload=$WLOG"
 echo "[bench] topology=$TOPO"
 echo "[bench] queries_per_end=$QUERIES wait_ms=$WAIT_MS"
+echo "[bench] edge_transport=$EDGE_TRANSPORT end_transport=$END_TRANSPORT build_dir=$BUILD_DIR"
 
 PLIN_END_EXTRA_ARGS="--bench-workload $WLOG --bench-queries $QUERIES --bench-wait-ms $WAIT_MS" \
+PLIN_BUILD_DIR="$BUILD_DIR" \
     bash "$PROJ/scripts/run_all.sh" "$DATA" "$TOPO" "$WLOG"
 
 deadline=$((SECONDS + TIMEOUT_SEC))
@@ -78,7 +93,7 @@ while true; do
     sleep 5
 done
 
-"$PYTHON_BIN" - "$OUT" "$CSV" "$MD" "$DATA" "$WLOG" "$TOPO" "$QUERIES" "$WAIT_MS" <<'PY'
+"$PYTHON_BIN" - "$OUT" "$CSV" "$MD" "$DATA" "$WLOG" "$TOPO" "$QUERIES" "$WAIT_MS" "$EDGE_TRANSPORT" "$END_TRANSPORT" "$BUILD_DIR" <<'PY'
 import csv
 import datetime as dt
 import glob
@@ -86,7 +101,7 @@ import os
 import re
 import sys
 
-out_dir, csv_path, md_path, data_path, workload_path, topo_path, queries, wait_ms = sys.argv[1:]
+out_dir, csv_path, md_path, data_path, workload_path, topo_path, queries, wait_ms, edge_transport, end_transport, build_dir = sys.argv[1:]
 
 rows = []
 for path in sorted(glob.glob(os.path.join(out_dir, "end_*.log"))):
@@ -118,7 +133,9 @@ rows.sort(key=lambda r: r["end"])
 if len(rows) != 10:
     raise SystemExit(f"expected 10 benchmark rows, got {len(rows)}")
 
-headers = ["end", "queries", "found", "not_found", "stage1", "stage2", "stage3", "stage4", "seconds", "qps", "hot_cache_size", "log"]
+headers = ["end", "queries", "found", "not_found", "stage1", "stage2", "stage3", "stage4", "seconds", "qps", "hot_cache_size", "transport", "log"]
+for r in rows:
+    r["transport"] = end_transport
 with open(csv_path, "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=headers)
     w.writeheader()
@@ -149,6 +166,9 @@ with open(md_path, "w") as f:
     f.write(f"- topology: `{topo_path}`\n")
     f.write(f"- queries_per_end: `{queries}`\n")
     f.write(f"- bench_wait_ms: `{wait_ms}`\n\n")
+    f.write(f"- edge_transport: `{edge_transport}`\n")
+    f.write(f"- end_transport: `{end_transport}`\n")
+    f.write(f"- build_dir: `{build_dir}`\n\n")
     f.write("## Summary\n\n")
     f.write("| metric | value |\n")
     f.write("|---|---:|\n")
