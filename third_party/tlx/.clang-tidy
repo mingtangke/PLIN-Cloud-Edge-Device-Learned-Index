@@ -1,0 +1,33 @@
+---
+Checks:
+  - "-*"
+  - "misc-include-cleaner"
+  - "openmp-*"
+  - "performance-*"
+  - "-performance-enum-size"
+  - "portability-*"
+  - "-portability-simd-intrinsics"
+  - "readability-*"
+  - "-readability-avoid-const-params-in-decls"
+  - "-readability-avoid-nested-conditional-operator"
+  - "-readability-avoid-return-with-void-value"
+  - "-readability-avoid-unconditional-preprocessor-if"
+  - "-readability-braces-around-statements"
+  - "-readability-const-return-type"
+  - "-readability-function-cognitive-complexity"
+  - "-readability-identifier-length"
+  - "-readability-isolate-declaration"
+  - "-readability-magic-numbers"
+  - "-readability-named-parameter"
+  - "-readability-non-const-parameter"
+  - "-readability-qualified-auto"
+  - "-readability-redundant-access-specifiers"
+  - "-readability-static-accessed-through-instance"
+  - "cppcoreguidelines-prefer-member-initializer"
+  - "cppcoreguidelines-use-default-member-init"
+  - "cppcoreguidelines-virtual-class-destructor"
+  - "cppcoreguidelines-non-private-member-variables-in-classes"
+
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+FormatStyle: file

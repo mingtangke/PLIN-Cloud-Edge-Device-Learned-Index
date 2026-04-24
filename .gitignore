@@ -1,0 +1,16 @@
+build/
+build.zip
+
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+__pycache__/
+*.py[cod]
+
+.codex
+
+output/*.log

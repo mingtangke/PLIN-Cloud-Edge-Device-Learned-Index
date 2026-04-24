@@ -1,0 +1,25 @@
+# Static topology for the 1-cloud / 2-edge / 10-end demo.
+# Key ranges derived from Data.txt (9,999,999 rows, sorted by key).
+# Each end holds exactly 1,000,000 rows. Boundaries:
+#   End N key_hi = key at row N*1000000   (last  row of block N)
+#   End N key_lo = key at row (N-1)*M+1  (first row of block N)
+# _key_t = double (from parameters.h). All key values are large floats.
+cloud:
+  host: 127.0.0.1
+  port: 7000
+
+edges:
+  - { id: 1, host: 127.0.0.1, port: 7101, ends: [1, 2, 3, 4, 5] }
+  - { id: 2, host: 127.0.0.1, port: 7102, ends: [6, 7, 8, 9, 10] }
+
+ends:
+  - { id: 1,  edge: 1, host: 127.0.0.1, port: 7201, key_range: [-1e13,                -12815012040.383575] }
+  - { id: 2,  edge: 1, host: 127.0.0.1, port: 7202, key_range: [-12815008635.778347,  -8412909134.803921] }
+  - { id: 3,  edge: 1, host: 127.0.0.1, port: 7203, key_range: [-8412904218.133328,   -5241986277.736485] }
+  - { id: 4,  edge: 1, host: 127.0.0.1, port: 7204, key_range: [-5241981717.063254,   -2528482259.317568] }
+  - { id: 5,  edge: 1, host: 127.0.0.1, port: 7205, key_range: [-2528480743.304966,    5194391.707614] }
+  - { id: 6,  edge: 2, host: 127.0.0.1, port: 7206, key_range: [5202302.971719,        2535148186.474630] }
+  - { id: 7,  edge: 2, host: 127.0.0.1, port: 7207, key_range: [2535148311.171382,     5242610742.708064] }
+  - { id: 8,  edge: 2, host: 127.0.0.1, port: 7208, key_range: [5242617165.837655,     8416781211.038959] }
+  - { id: 9,  edge: 2, host: 127.0.0.1, port: 7209, key_range: [8416782370.537807,    12813373369.570753] }
+  - { id: 10, edge: 2, host: 127.0.0.1, port: 7210, key_range: [12813376566.001352,    1e13] }
